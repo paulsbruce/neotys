@@ -1,53 +1,67 @@
-version: '2'
+version: '3'
 services:
-  jenkins:
-    container_name: jenkins
-    image: "neotys/cpv-jenkins:1.1"
-    ports:
-     - "8081:8080" # move over for the nts server
-    links:
-     - "ushahidi"
-     - "mysql-ushahidi"
-     - "nts"
-     - "loadgenerator1"
-  nts:
-    container_name: nts
-    image: "neotys/cpv-nts:1.1"
-    ports:
-      - "8080:8080" # the image above announces as 8080 automatically, not 8888
-  ushahidi:
-    container_name: ushahidi
-    image: "neotys/cpv-ushahidi:1.0"
-    ports:
-      - "80:80"
-    links:
-    - "mysql-ushahidi"
-    depends_on:
-     - mysql-ushahidi
-  mysql-ushahidi:
-    container_name: mysql-ushahidi
-    image: "neotys/cpv-mysql:1.0"
-    ports:
-      - "3306:3306"
-    environment:
-      - MYSQL_ROOT_PASSWORD=cpvprivate
-  cadvisor:
-    container_name: cadvisor
-    image: "google/cadvisor:latest"
-    ports:
-      - "7777:8080"
-    volumes:
-      - /:/rootfs
-      - /var/run:/var/run
-      - /sys:/sys
-      - /var/lib/docker:/var/lib/docker
-      - /cgroup:/sys/fs/cgroup
+  # jenkins:
+  #   container_name: jenkins
+  #   image: "neotys/cpv-jenkins:1.1"
+  #   ports:
+  #    - "8081:8080" # move over for the nts server
+  #   links:
+  #    - "ushahidi"
+  #    - "mysql-ushahidi"
+  #    - "nts"
+  #    - "loadgenerator1"
+  # nts:
+  #   container_name: nts
+  #   image: "neotys/cpv-nts:1.1"
+  #   ports:
+  #     - "8080:8080" # the image above announces as 8080 automatically, not 8888
+  # ushahidi:
+  #   container_name: ushahidi
+  #   image: "neotys/cpv-ushahidi:1.0"
+  #   ports:
+  #     - "80:80"
+  #   links:
+  #   - "mysql-ushahidi"
+  #   depends_on:
+  #    - mysql-ushahidi
+  # mysql-ushahidi:
+  #   container_name: mysql-ushahidi
+  #   image: "neotys/cpv-mysql:1.0"
+  #   ports:
+  #     - "3306:3306"
+  #   environment:
+  #     - MYSQL_ROOT_PASSWORD=cpvprivate
+  # cadvisor:
+  #   container_name: cadvisor
+  #   image: "google/cadvisor:latest"
+  #   ports:
+  #     - "7777:8080"
+  #   volumes:
+  #     - /:/rootfs
+  #     - /var/run:/var/run
+  #     - /sys:/sys
+  #     - /var/lib/docker:/var/lib/docker
+  #     #- /cgroup:/sys/fs/cgroup
 
   loadgenerator1:
     container_name: loadgenerator1
+    #command: python web/manage_dev.py runserver 0.0.0.0:8000
     image: "neotys/neoload-loadgenerator"
     ports:
-      - "7100:7100"
-    links:
-      - "ushahidi"
-      - "mysql-ushahidi"
+      - "7101:7101"
+      - "1701"
+    #links:
+      #- "ushahidi"
+      #- "mysql-ushahidi"
+    command:
+      - /bin/sh
+      - -c
+      - |
+          apt-get install lsof &
+          wait $$!
+          sed -i 's/agent.server.port=7100/agent.server.port=7101/g' /neoload6.1/conf/agent.properties &
+          wait $$!
+          /bin/sh -c /neoload6.1/bin/LoadGeneratorAgent &
+          PID=$$!
+          ps -aux
+          tail -f /proc/$$PID/fd/1
