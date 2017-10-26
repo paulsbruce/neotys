@@ -66,7 +66,7 @@ function wait_for_ready() {
   # print out important things like all the URLs above, NLW settings, NLS settings, and API keys
   # NLW default admin password: nlweb-password-changeit
 
-  #open 'http://ushahidi/welcome'
+  open 'http://ushahidi/welcome'
   open 'http://nlweb:9090'
 }
 
