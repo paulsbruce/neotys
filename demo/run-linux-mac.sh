@@ -55,7 +55,7 @@ function wait_for_ready() {
       if ps -p $cpid > /dev/null ; then printf '.'; else exit; fi
   done
 
-  if ps -p $cpid > /dev/null ; then printf '.'; else exit; fi
+  if ! ps -p $cpid > /dev/null ; then exit; fi
 
   # warm up each of the web front-ends
   curl -s 'http://jenkins:8081' > /dev/null
