@@ -5,36 +5,52 @@ services:
     container_name: jenkins
     image: "neotys/cpv-jenkins:1.1"
     ports:
-     - "8081:8080" # move over for the nts server
+      - "8081:8080" # move over for the nts server
+      #- "82:8080"
     links:
-     - "ushahidi"
-     - "mysql-ushahidi"
-     - "nts"
-     - "loadgenerator1"
+      - "cpvdemo_ushahidi_1"
+      - "mysql-ushahidi"
+      - "nts"
+      - "loadgenerator1"
+      - "loadgenerator2"
+    networks:
+      - cpv-net
+    deploy:
+      resources:
+        reservations:
+          cpus: '0.25'
+
+  cpvdemo_ushahidi_1:
+    container_name: cpvdemo_ushahidi_1
+    image: "neotys/cpv-ushahidi:1.0"
+    ports:
+      - "80:80"
+    links:
+      - "mysql-ushahidi"
+    depends_on:
+      - mysql-ushahidi
+    networks:
+      - cpv-net
 
   nts:
     container_name: nts
     image: "neotys/cpv-nts:1.1"
     ports:
       - "8888:8080" # the image above announces as 8080 automatically, not 8888
-
-  ushahidi:
-    container_name: ushahidi
-    image: "neotys/cpv-ushahidi:1.0"
-    ports:
-      - "80:80"
-    links:
-    - "mysql-ushahidi"
-    depends_on:
-     - mysql-ushahidi
+    networks:
+      - cpv-net
 
   mysql-ushahidi:
     container_name: mysql-ushahidi
+    depends_on:
+      - nts
     image: "neotys/cpv-mysql:1.0"
     ports:
       - "3306:3306"
     environment:
       - MYSQL_ROOT_PASSWORD=cpvprivate
+    networks:
+      - cpv-net
 
   cadvisor:
     container_name: cadvisor
@@ -47,9 +63,13 @@ services:
       - /sys:/sys
       - /var/lib/docker:/var/lib/docker
       #- /cgroup:/sys/fs/cgroup
+    networks:
+      - cpv-net
 
   loadgenerator1:
     container_name: loadgenerator1
+    depends_on:
+      - nts
     #command: python web/manage_dev.py runserver 0.0.0.0:8000
     image: "neotys/neoload-loadgenerator"
     ports:
@@ -70,9 +90,13 @@ services:
           PID=$$!
           ps -aux
           tail -f /proc/$$PID/fd/1
+    networks:
+      - cpv-net
 
   loadgenerator2:
     container_name: loadgenerator2
+    depends_on:
+      - nts
     #command: python web/manage_dev.py runserver 0.0.0.0:8000
     image: "neotys/neoload-loadgenerator"
     ports:
@@ -93,3 +117,71 @@ services:
           PID=$$!
           ps -aux
           tail -f /proc/$$PID/fd/1
+    networks:
+      - cpv-net
+
+  mongo:
+    depends_on:
+      - loadgenerator1 # force this stack to wait until cpv is spun up
+    image: mongo:3.2.14
+    hostname: mongo
+    volumes:
+      - ./nlweb/mongo/db:/data/db
+      - ./nlweb/mongo/backup:/data/backup
+    tty: true
+    stdin_open: true
+    container_name: mongo
+    networks:
+      - nlweb-net
+
+  nlweb-backend:
+    depends_on:
+      - mongo
+    # NeoLoad Web Backend:
+    # - 8080: NeoLoad REST API Port
+    # - 9092: NeoLoad Web BackendEnd Monitoring
+    ports:
+      - 8080:1081
+      - 9082:9092
+    image: neotys/neoload-web-backend:latest
+    environment:
+      #MEMORY_MAX: 2600m
+      MONGODB_HOST: mongo
+      MONGODB_PORT: 27017
+      #MONGODB_MAX_POOLSIZE: 50
+    links:
+      - mongo
+    tty: true
+    stdin_open: true
+    container_name: nlweb-backend
+    networks:
+      - nlweb-net
+    deploy:
+      resources:
+        reservations:
+          cpus: '0.50'
+          memory: 1300M
+
+  nlweb-frontend:
+    # NeoLoad Web Frontend:
+    # - 80: NeoLoad Web Interface
+    # - 81: NeoLoad Web FrontEnd Monitoring
+    depends_on:
+      - nlweb-backend
+    ports:
+    - 9090:9090
+    - 9091:9091
+    image: neotys/neoload-web-frontend:latest
+    #environment:
+      #MEMORY_MAX: 896m
+    links:
+      - nlweb-backend
+    tty: true
+    stdin_open: true
+    container_name: nlweb-frontend
+    networks:
+      - nlweb-net
+
+networks:
+  nlweb-net:
+  cpv-net:
