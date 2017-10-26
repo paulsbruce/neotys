@@ -1,12 +1,12 @@
 #!/bin/bash
 
 declare -a hostnames
-hostnames=(jenkins nts ushahidi mysql-ushahidi cadvisor loadgenerator1 loadgenerator2 nlweb)
+hostnames=("jenkins" "nts" "ushahidi" "mysql-ushahidi" "cadvisor" "loadgenerator1" "loadgenerator2" "nlweb")
 
 # if any host entries necessary, restart script in elevated to write host names
 requires_elevation=0
-for i in $hostnames; do
-  if ! grep -q "$i" /etc/hosts; then requires_elevation=1; fi
+for hostname in "${hostnames[@]}"; do
+  if ! grep -q "$hostname" /etc/hosts; then requires_elevation=1; fi
 done
 
 if [ "$requires_elevation" -eq 1 ]; then
@@ -36,9 +36,10 @@ else
 fi
 
 # add host entries
-for i in $hostnames; do
-  if ! grep -q "$i" /etc/hosts; then echo "0.0.0.0  $i" >> /etc/hosts; fi
+for hostname in "${hostnames[@]}"; do
+  if ! grep -q "$hostname" /etc/hosts; then echo "0.0.0.0  $hostname" >> /etc/hosts; fi
 done
+
 
 # make sure data directories exist for NeoLoadWeb mongo back-end
 mkdir -p nlweb/mongo/db
