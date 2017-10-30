@@ -1,7 +1,7 @@
 #!/bin/bash
 
 declare -a hostnames
-hostnames=("jenkins" "nts" "ushahidi" "mysql-ushahidi" "cadvisor" "loadgenerator1" "loadgenerator2" "nlweb")
+hostnames=(jenkins nts ushahidi mysql-ushahidi cadvisor loadgenerator1 loadgenerator2 nlweb)
 
 # if any host entries necessary, restart script in elevated to write host names
 requires_elevation=0
