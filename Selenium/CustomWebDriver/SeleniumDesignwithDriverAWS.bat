@@ -1,0 +1,1 @@
+"C:\Program Files\NeoLoad 6.1\jre\bin\java.exe" -jar seleniumPost.jar -Dnl.selenium.proxy.mode=Design -Ddriver=C:\Users\pbruce\Desktop\demo\chromedriver.exe -Dimg=C:\Users\pbruce\Desktop\demo\Sea.jpg

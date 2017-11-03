@@ -1,0 +1,80 @@
+group 'selenium.example.neotys.com'
+version '1.0-SNAPSHOT'
+
+apply plugin: 'groovy'
+apply plugin: 'java'
+
+sourceCompatibility = 1.8
+
+repositories {
+    mavenCentral()
+
+    maven {
+        url "http://maven.neotys.com/content/repositories/releases"
+    }
+}
+
+dependencies {
+    compile 'org.codehaus.groovy:groovy-all:2.3.11'
+    testCompile group: 'junit', name: 'junit', version: '4.12'
+
+    testCompile 'org.seleniumhq.selenium:selenium-java:3.6.0'
+    testCompile 'org.seleniumhq.selenium.fluent:fluent-selenium:1.17'
+    compile group: 'javassist', name: 'javassist', version: '3.12.1.GA'
+
+    testCompile 'com.neotys.selenium:neotys-selenium-proxy:2.1.0'
+}
+
+task testPerformance(type: Test) {
+    include 'PerformanceTestSuite.class'
+}
+
+
+
+
+
+
+
+
+test {
+    jvmArgs project.gradle.startParameter.systemPropertiesArgs.entrySet().collect{"-D${it.key}=${it.value}"}
+}
+
+task printDepsTreeInJson {
+    doLast {
+        configurations.testCompile.incoming.getResolutionResult().getAllDependencies().each { depResult  ->
+            println "{\"from\":\"" + depResult.getFrom() + "\"," + "\"requested\":\"" + depResult.getRequested() + "\"}"
+        }
+    }
+}
+
+task printSolvedDepsTreeInJson {
+    doLast {
+        def jsonOutput = "["
+        configurations.compile.resolvedConfiguration.firstLevelModuleDependencies.each { dep ->
+            def addToJson
+            addToJson = { resolvedDep ->
+                jsonOutput += "\n{"
+                jsonOutput += "\"groupId\":\"${resolvedDep.module.id.group}\",\"artifactId\":\"${resolvedDep.module.id.name}\",\"version\":\"${resolvedDep.module.id.version}\",\"file\":\"${resolvedDep.getModuleArtifacts()[0].file}\""
+                jsonOutput += ",\"dependencies\":["
+                if(resolvedDep.children.size()!=0){
+                    resolvedDep.children.each { childResolvedDep ->
+                        if(resolvedDep in childResolvedDep.getParents() && childResolvedDep.getConfiguration() == 'compile'){
+                            addToJson(childResolvedDep)
+                        }
+                    }
+                    if(jsonOutput[-1] == ','){
+                        jsonOutput = jsonOutput[0..-2]
+                    }
+                }
+                jsonOutput += "]},"
+            }
+            addToJson(dep)
+        }
+        if(jsonOutput[-1] == ','){
+            jsonOutput = jsonOutput[0..-2]
+        }
+        jsonOutput += "]"
+        println jsonOutput
+    }
+}
