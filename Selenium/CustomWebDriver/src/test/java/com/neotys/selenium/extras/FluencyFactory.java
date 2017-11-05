@@ -73,7 +73,7 @@ public class FluencyFactory {
     }
 
     public static ExpectedCondition<Boolean> angularPendingRequestsZero() {
-        return driver -> (Boolean) ((JavascriptExecutor) driver).executeScript("return (angular ? (angular.element(document).injector().get('$http').pendingRequests.length === 0) : true);");
+        return driver -> (Boolean) ((JavascriptExecutor) driver).executeScript("try { return (angular && (typeof angular === 'object' || typeof angular === 'function') ? (angular.element(document).injector().get('$http').pendingRequests.length === 0) : true); } catch(e) { console.log(e); return true; }");
     }
 
 }

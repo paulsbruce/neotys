@@ -131,12 +131,19 @@ public class FluentNLWebDriver extends TransactableWebDriver implements Transact
 
             // if not specified
             if (fil.exists())
-                filePath = (fil.getAbsolutePath());
+                filePath = fil.getAbsolutePath();
             else {
                 filePath = System.getenv("webdriver.chrome.driver");
                 if (filePath != null) {
                     fil = new File(filePath);
-                    if(fil.exists()) filePath = (fil.getAbsolutePath());
+                    if(fil.exists())
+                        filePath = fil.getAbsolutePath();
+                } else {
+                    if(File.separator.equals("/")) {
+                        fil = new File("/usr/local/bin/chromedriver");
+                        if(fil.exists())
+                            filePath = fil.getAbsolutePath();
+                    }
                 }
             }
         }
