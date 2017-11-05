@@ -1,7 +1,6 @@
 package Selenium.Tests;
 
 import Selenium.utils.*;
-import org.seleniumhq.selenium.fluent.FluentWebDriver;
 
 import org.junit.AfterClass;
 import org.junit.BeforeClass;
@@ -20,18 +19,18 @@ import java.io.File;
 @Category({FunctionalTests.class, PerformanceTests.class})
 public class DoPostV1_1_fluent {
 
-    static CompositeWebDriver driver;
+    static MyCustomWebDriver driver;
     static String baseUrl;
     static String imgPath;
 
     @BeforeClass
     public static void before() {
 
-        driver = CompositeWebDriver.newDriver("Post1_1"); // equivalent to NLWebDriverFactory.newNLWebDriver(baseDriver, nlUserPath, nlProjectPath);
+        driver = MyCustomWebDriver.newDriver("Post1_1"); // equivalent to NLWebDriverFactory.newNLWebDriver(baseDriver, nlUserPath, nlProjectPath);
 
         baseUrl = driver.getSetting("baseUrl", "http://ushahidi");
 
-        imgPath = driver.getSetting("img", CompositeWebDriver.WORKING_DIR + File.separator +  "Sea.jpg");
+        imgPath = driver.getSetting("img", MyCustomWebDriver.WORKING_DIR + File.separator +  "Sea.jpg");
     }
 
     @Test
@@ -40,29 +39,33 @@ public class DoPostV1_1_fluent {
         // 1. using the fluent driver is syntactically nicer AND less flaky
         // 2. using the CompositeWebDriver automatically captures transactions based on page events
 
-        FluentWebDriver f = driver.fluent();
-
         driver.get(baseUrl + "/views/map");
 
-        f.button(className("button-alpha button-fab"))
+        driver.fluent()
+                .button(className("button-alpha button-fab"))
                 .click();
 
-        f.elements(className("bug"))
+        driver.fluent()
+                .elements(className("bug"))
                 .filter(driver.textContains("v1.2"))
                 .click();
 
-        f.input(id("title"))
+        driver.fluent()
+                .input(id("title"))
                 .clearField()
                 .sendKeys("test");
 
-        f.textarea(id("content"))
+        driver.fluent()
+                .textarea(id("content"))
                 .clearField()
                 .sendKeys("this is a test");
 
-        f.select(name("values_21"))
+        driver.fluent()
+                .select(name("values_21"))
                 .selectByVisibleText("Wild Fire");
 
-        f.input(By.cssSelector("input[name='values_22']"))
+        driver.fluent()
+                .input(By.cssSelector("input[name='values_22']"))
                 .clearField()
                 .sendKeys("Boston")
                 .sendKeys(Keys.ENTER);
@@ -73,7 +76,8 @@ public class DoPostV1_1_fluent {
                 .click();
         driver.sleep(1000);
 
-        f.link(className("view-map"))
+        driver.fluent()
+                .link(className("view-map"))
                 .click();
     }
 

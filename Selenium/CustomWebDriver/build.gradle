@@ -21,7 +21,7 @@ dependencies {
     testCompile 'org.seleniumhq.selenium:selenium-java:3.6.0'
     testCompile 'org.seleniumhq.selenium.fluent:fluent-selenium:1.17'
     compile group: 'javassist', name: 'javassist', version: '3.12.1.GA'
-s
+
     testCompile 'com.neotys.selenium:neotys-selenium-proxy:2.1.0'
 }
 

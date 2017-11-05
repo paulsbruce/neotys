@@ -16,6 +16,7 @@ import org.openqa.selenium.remote.DesiredCapabilities;
 import org.openqa.selenium.support.ui.Select;
 
 import java.io.File;
+import java.nio.file.Paths;
 import java.util.concurrent.TimeUnit;
 
 /*********************************************************************************************************************/
@@ -39,7 +40,7 @@ public class DoPostV1_0_flaky {
 
         baseUrl =  ModeHelper.getSetting("baseUrl", "http://ushahidi");
 
-        imgPath =  ModeHelper.getSetting("img", CompositeWebDriver.WORKING_DIR + File.separator +  "Sea.jpg");
+        imgPath =  ModeHelper.getSetting("img", Paths.get("").toAbsolutePath().toString() + File.separator +  "Sea.jpg");
     }
 
     @Test

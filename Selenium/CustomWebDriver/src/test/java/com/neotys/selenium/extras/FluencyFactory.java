@@ -1,4 +1,4 @@
-package Selenium.utils;
+package com.neotys.selenium.extras;
 
 import javassist.util.proxy.MethodHandler;
 import javassist.util.proxy.ProxyFactory;
@@ -10,8 +10,6 @@ import org.openqa.selenium.support.ui.WebDriverWait;
 import org.seleniumhq.selenium.fluent.FluentWebDriver;
 import org.seleniumhq.selenium.fluent.FluentWebElement;
 import org.seleniumhq.selenium.fluent.Period;
-
-import java.lang.reflect.Method;
 
 public class FluencyFactory {
 
@@ -63,7 +61,8 @@ public class FluencyFactory {
 
     public static ExpectedCondition<Boolean> documentReadyStateComplete() {
         return driver -> {
-            String readyState = ((JavascriptExecutor)driver).executeScript("return document.readyState").toString();
+            JavascriptExecutor jse = (JavascriptExecutor)driver;
+            String readyState = String.format("%s", jse.executeScript("return document ? document.readyState : null;"));
             System.out.println("Ready State => " + readyState);
             return readyState.equals("complete");
         };

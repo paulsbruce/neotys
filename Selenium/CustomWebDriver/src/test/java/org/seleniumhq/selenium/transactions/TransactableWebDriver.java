@@ -1,4 +1,4 @@
-package Selenium.utils;
+package org.seleniumhq.selenium.transactions;
 
 import org.apache.commons.lang.StringUtils;
 import org.openqa.selenium.By;
@@ -23,24 +23,7 @@ public class TransactableWebDriver implements WebDriver, WebDriverEventListener 
         underlyingDriver = firing;
         firing.register(this);
     }
-    public class WebDriverTransaction {
-        private String name;
-        private String id;
-        public WebDriverTransaction(String id, String name) {
-            this.name = name;
-            this.id = id;
-        }
-        public WebDriverTransaction(String name) {
-            this.name = name;
-        }
-        public String getName() { return this.name; }
-        public String getId() { return this.id; }
-    }
 
-    public interface TransactionListener {
-        void transactionStarted(WebDriverTransaction transaction);
-        void transactionFinished(WebDriverTransaction transaction);
-    }
     public void addTransactionListener(TransactionListener listener) {
         listeners.add(listener);
     }
@@ -76,6 +59,8 @@ public class TransactableWebDriver implements WebDriver, WebDriverEventListener 
     public void startTransaction(WebDriverTransaction transaction) {
         startTransaction(transaction, null);
     }
+    public void startTransaction(String transactionName) { startTransaction((new WebDriverTransaction(transactionName)), null); }
+    public void startTransaction(String transactionName, Runnable fSteps) { startTransaction((new WebDriverTransaction(transactionName)), fSteps); }
 
     private void finalizeTransaction() {
         if(lastTransaction != null) {

@@ -8,7 +8,6 @@ import org.junit.Test;
 import org.junit.experimental.categories.Category;
 import org.openqa.selenium.By;
 import org.openqa.selenium.Keys;
-import org.seleniumhq.selenium.fluent.FluentWebDriver;
 import static org.openqa.selenium.By.*;
 
 import java.io.File;
@@ -20,25 +19,22 @@ import java.io.File;
 @Category({FunctionalTests.class, PerformanceTests.class})
 public class DoPostV1_2 {
 
-    static CompositeWebDriver driver;
+    static MyCustomWebDriver driver;
     static String baseUrl;
     static String imgPath;
 
     @BeforeClass
     public static void before() {
 
-        driver = CompositeWebDriver.newDriver("Post1_1"); // equivalent to NLWebDriverFactory.newNLWebDriver(baseDriver, nlUserPath, nlProjectPath);
+        driver = MyCustomWebDriver.newDriver("Post1_1"); // equivalent to NLWebDriverFactory.newNLWebDriver(baseDriver, nlUserPath, nlProjectPath);
 
         baseUrl = driver.getSetting("baseUrl", "http://ushahidi");
 
-        imgPath = driver.getSetting("img", CompositeWebDriver.WORKING_DIR + File.separator +  "Sea.jpg");
+        imgPath = driver.getSetting("img", MyCustomWebDriver.WORKING_DIR + File.separator +  "Sea.jpg");
     }
 
     @Test
     public void testPost() throws Exception {
-
-        FluentWebDriver f = driver.fluent();
-
 
         // you can explicitly define transaction (step groups)
         driver.startTransaction("Home");
@@ -48,34 +44,41 @@ public class DoPostV1_2 {
         // or you can define steps as lambda, which has the added benefits of screenshots + auto-timers and more
         driver.startTransaction("Add New", () ->
         {
-            f.button(className("button-alpha button-fab"))
+            driver.fluent()
+                    .button(className("button-alpha button-fab"))
                     .click();
 
-            f.elements(className("bug"))
+            driver.fluent()
+                    .elements(className("bug"))
                     .filter(driver.textContains("v1.2"))
                     .click();
         });
 
         driver.startTransaction("Submit", () ->
         {
-            f.input(id("title"))
+            driver.fluent()
+                    .input(id("title"))
                     .clearField()
                     .sendKeys("test");
 
-            f.textarea(id("content"))
+            driver.fluent()
+                    .textarea(id("content"))
                     .clearField()
                     .sendKeys("this is a test");
 
-            f.select(name("values_21"))
+            driver.fluent()
+                    .select(name("values_21"))
                     .selectByVisibleText("Wild Fire");
 
-            f.input(By.cssSelector("input[name='values_22']"))
+            driver.fluent()
+                    .input(By.cssSelector("input[name='values_22']"))
                     .clearField()
                     .sendKeys("Boston")
                     .sendKeys(Keys.ENTER);
 
             if(true) { // v1.2 major difference in functional change
-                f.element(By.id("values_23"))
+                driver.fluent()
+                        .element(By.id("values_23"))
                         .clearField()
                         .sendKeys(imgPath);
             }
@@ -88,7 +91,8 @@ public class DoPostV1_2 {
 
         driver.startTransaction("Map", () ->
         {
-            f.link(className("view-map"))
+            driver.fluent()
+                    .link(className("view-map"))
                     .click();
         });
     }
