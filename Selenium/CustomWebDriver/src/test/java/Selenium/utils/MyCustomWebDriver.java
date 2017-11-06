@@ -13,7 +13,7 @@ public class MyCustomWebDriver extends FluentNLWebDriver {
 
     public static MyCustomWebDriver newDriver(String userPath) {
         // provides opportunity for custom pre-initialization activities
-        return new MyCustomWebDriver(FluentNLWebDriver.newDriver(userPath));
+        return new MyCustomWebDriver(FluentNLWebDriver.newDriver(null, userPath));
     }
 
 }

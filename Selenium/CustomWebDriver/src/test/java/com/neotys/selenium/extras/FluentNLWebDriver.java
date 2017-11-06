@@ -19,13 +19,16 @@ import org.seleniumhq.selenium.fluent.FluentWebDriver;
 import org.seleniumhq.selenium.transactions.TransactableWebDriver;
 import org.seleniumhq.selenium.transactions.TransactionListener;
 import org.seleniumhq.selenium.transactions.WebDriverTransaction;
-import sun.reflect.generics.reflectiveObjects.NotImplementedException;
 
 import java.io.File;
 import java.nio.file.Paths;
 import java.util.concurrent.TimeUnit;
 
 import static com.neotys.selenium.proxies.NLWebDriverFactory.addProxyCapabilitiesIfNecessary;
+
+/******************************************************************************************/
+/**  WRAPPER TO ADD FLUENT API AND TRANSACTABLE CAPABILITIES TO BASE NEOLOAD WEB DRIVER  **/
+/******************************************************************************************/
 
 public class FluentNLWebDriver extends TransactableWebDriver implements TransactionListener, JavascriptExecutor {
 
@@ -55,13 +58,13 @@ public class FluentNLWebDriver extends TransactableWebDriver implements Transact
                 if (designAPIClient.getStatus() == Status.BUSY)
                     designAPIClient.stopRecording(StopRecordingParams.newBuilder().build());
             } catch(Exception e) {
-
+                System.err.println("Could not stop current NeoLoad recording.");
             }
 
         }
     }
 
-    public static FluentNLWebDriver newDriver(String nlUserPath)  {
+    public static FluentNLWebDriver newDriver(WebDriver delegate, String nlUserPath)  {
 
         if(!(new File(webDriverPath)).exists()) {
             System.err.println("You must provide a valid Selenium driver.");
@@ -70,14 +73,12 @@ public class FluentNLWebDriver extends TransactableWebDriver implements Transact
 
         System.out.println("Running in NeoLoad [" + ModeHelper.getMode() + "] mode.");
 
-        WebDriver delegate = getBrowserVersionDriver(); // in composite, this is where you'd create your base driver
+        // if not provided by test explicitly, create a base web driver
+        WebDriver basis = delegate == null ? getBrowserVersionDriver() : delegate;
 
         // inject NL driver with user path and project parameters
-        NLRemoteWebDriver nl = NLWebDriverFactory.newNLWebDriver(delegate, nlUserPath, nlProjectPath);
-        FluentNLWebDriver fluent = new FluentNLWebDriver(nl); // Transactable + Fluent
-        fluent.addTransactionListener(fluent);
-
-        return fluent;
+        NLRemoteWebDriver nl = NLWebDriverFactory.newNLWebDriver(basis, nlUserPath, nlProjectPath);
+        return new FluentNLWebDriver(nl); // Transactable + Fluent
     }
 
     protected FluentNLWebDriver(FluentNLWebDriver superclassModel) {
@@ -90,6 +91,7 @@ public class FluentNLWebDriver extends TransactableWebDriver implements Transact
 
         nlDriver = (NLWebDriver)delegate; // null if not handed the right type, still works as harness w/ no recording
         fluent = FluencyFactory.createFluentWebDriver(this, timeoutInSeconds);
+        this.addTransactionListener(this);
     }
 
     public String getMode() {
@@ -105,6 +107,7 @@ public class FluentNLWebDriver extends TransactableWebDriver implements Transact
         nlDriver.stopTransaction();
     }
 
+    // helper function to sleep for a predetermined period of time; provides compat to old test coding practices
     public void sleep(int ms) {
         try {
             Thread.sleep(ms);
@@ -113,11 +116,12 @@ public class FluentNLWebDriver extends TransactableWebDriver implements Transact
         }
     }
 
+    // helper function for scripts, to filter for elements that contain specific text
     public static FluentMatcher textContains(String textToMatch) {
         return (webElement, ix) -> webElement.getText().toString().contains(textToMatch);
     }
 
-
+    // accessibility to fluent API through this driver
     public FluentWebDriver fluent() {
         return fluent;
     }
@@ -125,9 +129,10 @@ public class FluentNLWebDriver extends TransactableWebDriver implements Transact
     // obtain a full system path to a selenium driver
     private static String initializeDriverPath() {
         String filePath = System.getProperty("driver");
+        File fil = null;
         if(filePath != null) {
             filePath = !filePath.contains(File.separator) ? WORKING_DIR + File.separator + filePath : filePath;
-            File fil = new File(filePath);
+            fil = new File(filePath);
 
             // if not specified
             if (fil.exists())
@@ -138,13 +143,15 @@ public class FluentNLWebDriver extends TransactableWebDriver implements Transact
                     fil = new File(filePath);
                     if(fil.exists())
                         filePath = fil.getAbsolutePath();
-                } else {
-                    if(File.separator.equals("/")) {
-                        fil = new File("/usr/local/bin/chromedriver");
-                        if(fil.exists())
-                            filePath = fil.getAbsolutePath();
-                    }
                 }
+            }
+        }
+        if(filePath == null)
+        {
+            if(File.separator.equals("/")) {
+                fil = new File("/usr/local/bin/chromedriver");
+                if(fil.exists())
+                    filePath = fil.getAbsolutePath();
             }
         }
         if(filePath == null)
@@ -152,6 +159,7 @@ public class FluentNLWebDriver extends TransactableWebDriver implements Transact
         return filePath;
     }
 
+    // used when in default modes, get a suitable WebDriver based on execution context parameters etc.
     private static WebDriver getBrowserVersionDriver() {
 
         DesiredCapabilities caps;
@@ -172,7 +180,7 @@ public class FluentNLWebDriver extends TransactableWebDriver implements Transact
             return new FirefoxDriver(caps);
         }
 
-        throw new NotImplementedException();
+        throw new NotFoundException("Could not find a suitable browser driver. Please verify you have installed one.");
     }
 
     @Override

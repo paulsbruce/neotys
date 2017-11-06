@@ -38,6 +38,7 @@ task testPerformance(type: Test) {
 
 test {
     jvmArgs project.gradle.startParameter.systemPropertiesArgs.entrySet().collect{"-D${it.key}=${it.value}"}
+    exclude 'Selenium/Tests/**'
 }
 
 task printDepsTreeInJson {
