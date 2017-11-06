@@ -17,10 +17,10 @@ repositories {
 dependencies {
     compile 'org.codehaus.groovy:groovy-all:2.3.11'
     testCompile group: 'junit', name: 'junit', version: '4.12'
+    testCompile 'org.spockframework:spock-core:0.7-groovy-2.0'
 
     testCompile 'org.seleniumhq.selenium:selenium-java:3.6.0'
     testCompile 'org.seleniumhq.selenium.fluent:fluent-selenium:1.17'
-    compile group: 'javassist', name: 'javassist', version: '3.12.1.GA'
 
     testCompile 'com.neotys.selenium:neotys-selenium-proxy:2.1.0'
 }
@@ -39,6 +39,16 @@ task testPerformance(type: Test) {
 test {
     jvmArgs project.gradle.startParameter.systemPropertiesArgs.entrySet().collect{"-D${it.key}=${it.value}"}
     exclude 'Selenium/Tests/**'
+
+    testLogging.showStandardStreams = true
+
+    beforeTest { descriptor ->
+        logger.lifecycle("Running test: " + descriptor)
+    }
+
+    onOutput { descriptor, event ->
+        logger.lifecycle("Test: " + descriptor + " produced standard out/err: " + event.message )
+    }
 }
 
 task printDepsTreeInJson {
