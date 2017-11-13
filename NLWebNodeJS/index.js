@@ -6,6 +6,7 @@ const express = require('express'),
   bodyParser = require('body-parser');
 
 const json2csv = require('json2csv');
+const HashMap = require('hashmap');
 
 console.log('NeoLoad flattener RESTful API server started on: ' + port);
 
@@ -65,37 +66,57 @@ app.route('/requests')
   });
 
 function writePoints(req, res, category) {
+  var agg_tests = new HashMap();
+  var agg_elements = new HashMap();
   filterTests(req)
     .then(tests => {
       return Promise.all(
         tests
-          .map(test => nlw.elements(test,category)
-            .then(els => els.filter(el => (el.id+"").indexOf("all-")<0))
+          .map(test => {
+            agg_tests.set(test.id,test);
+            return nlw.elements(test,category)
+            .then(els => els.filter(el => (el.id+"").indexOf("all-")<0));
+          }
+
       ))
     }).then(o => [].concat.apply([], o)) // squash test elements together
     .then(els => {
       return Promise.all(
-        els.map(el => nlw.points(el))
+        els.map(el => {
+          agg_elements.set(el.id, el);
+          return nlw.points(el);
+        })
       )
     }).then(o => [].concat.apply([], o)) // squash element request values
     .then(o => {
+      var simplified = o.map(i => {
+        i.from = new Date(i.test.startDate + i.from);
+        i.to = new Date(i.test.startDate + i.to);
+        return i;
+      })
       if(isCSV(req))
       {
-        var simplified = o.map(i => {
+        simplified = simplified.map(i => {
           i.category = category;
-          i.from = new Date(i.test.startDate + i.from);
-          i.to = new Date(i.test.startDate + i.to);
           i.test = i.test.name;
           i.element = i.element.name;
           return i;
         })
         res.send(json2csv({ data: o, fields: ['from','to','test','element','category'].concat(nlw.REQUEST_FIELDS) }));
       }
-      else
+      else {
+        simplified = simplified.map(i => {
+          i.test = i.test.id;
+          i.element = i.element.id;
+          return i;
+        });
         res.json({
           category: category,
-          requests: o
+          tests: agg_tests.values(),
+          elements: agg_elements.values(),
+          points: simplified
         });
+      }
     });
 }
 

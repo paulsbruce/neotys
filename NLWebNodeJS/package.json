@@ -16,6 +16,7 @@
     "body-parser": "^1.18.2",
     "cross-fetch": "^1.1.1",
     "express": "^4.16.2",
+    "hashmap": "^2.3.0",
     "http": "0.0.0",
     "http-proxy-agent": "^2.0.0",
     "https-proxy-agent": "^2.1.0",
