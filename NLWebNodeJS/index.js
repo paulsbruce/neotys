@@ -82,12 +82,14 @@ function writePoints(req, res, category) {
       if(isCSV(req))
       {
         var simplified = o.map(i => {
-          i.renameProperty('testName','test');
-          i.renameProperty('elementName','element');
           i.category = category;
+          i.from = new Date(i.test.startDate + i.from);
+          i.to = new Date(i.test.startDate + i.to);
+          i.test = i.test.name;
+          i.element = i.element.name;
           return i;
         })
-        res.send(json2csv({ data: o, fields: ['to','from','test','element','category'].concat(nlw.REQUEST_FIELDS) }));
+        res.send(json2csv({ data: o, fields: ['from','to','test','element','category'].concat(nlw.REQUEST_FIELDS) }));
       }
       else
         res.json({

@@ -1,5 +1,4 @@
 const Promise = require('promise');
-//const rp = require('request-promise');
 const fetch = require('cross-fetch');
 const Swagger = require('swagger-client');
 
@@ -70,8 +69,7 @@ function NLWAPI(apiKey,host) {
       return cli.apis.Results.GetTestElements({ testId: test.id, category: category });
     }).then(res => {
       return res.body.map(el => {
-        el.testId = test.id;
-        el.testName = test.name;
+        el.test = test;
         return el;
       });
     });
@@ -82,15 +80,13 @@ function NLWAPI(apiKey,host) {
   this.points = function(element) {
     return this.getClient().then(cli => {
       return cli.apis.Results.GetTestElementsPoints({
-        testId: element.testId,
+        testId: element.test.id,
         elementId: element.id,
         statistics: this.REQUEST_FIELDS.join(',')
       }).then(set => {
         return set.body.map(line => {
-          line.testId = element.testId;
-          line.testName = element.testName;
-          line.elementId = element.id;
-          line.elementName = element.name;
+          line.test = element.test;
+          line.element = element;
           return line;
         })
       });
