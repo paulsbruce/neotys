@@ -62,7 +62,7 @@ public class FluencyFactory {
     }
 
     // method to wait for all unfinished DOM business
-    private static void waitForMessageQueueEmpty(WebDriverWait wait) {
+    static void waitForMessageQueueEmpty(WebDriverWait wait) {
         wait.until(documentReadyStateComplete());
         wait.until(jQueryAJAXCallsHaveCompleted());
         wait.until(angularPendingRequestsZero());

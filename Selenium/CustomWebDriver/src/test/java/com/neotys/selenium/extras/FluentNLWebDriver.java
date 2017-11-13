@@ -14,6 +14,7 @@ import org.openqa.selenium.WebDriver;
 import org.openqa.selenium.chrome.ChromeDriver;
 import org.openqa.selenium.firefox.FirefoxDriver;
 import org.openqa.selenium.remote.DesiredCapabilities;
+import org.openqa.selenium.support.ui.WebDriverWait;
 import org.seleniumhq.selenium.fluent.FluentMatcher;
 import org.seleniumhq.selenium.fluent.FluentWebDriver;
 import org.seleniumhq.selenium.transactions.TransactableWebDriver;
@@ -22,6 +23,7 @@ import org.seleniumhq.selenium.transactions.WebDriverTransaction;
 
 import java.io.File;
 import java.nio.file.Paths;
+import java.util.concurrent.Callable;
 import java.util.concurrent.TimeUnit;
 
 import static com.neotys.selenium.proxies.NLWebDriverFactory.addProxyCapabilitiesIfNecessary;
@@ -192,4 +194,31 @@ public class FluentNLWebDriver extends TransactableWebDriver implements Transact
     public Object executeAsyncScript(String script, Object... args) {
         return ((JavascriptExecutor)nlDriver).executeAsyncScript(script, args);
     }
+
+    // ensures that, before close/quit, all outstanding requests have been processed (and NeoLoad captured them)
+    private void waitForMessageQueueEmpty() {
+        try {
+            TimeLimitedCodeBlock.runWithTimeout(() -> {
+                WebDriverWait wait = new WebDriverWait(this, timeoutInSeconds);
+                FluencyFactory.waitForMessageQueueEmpty(wait);
+            }, timeoutInSeconds, TimeUnit.SECONDS);
+        } catch(Exception e) {
+            System.err.println("Waiting for message queue to be empty took abnormally long. Not all traffic at the end of the recording may have been captured by NeoLoad. You may want to augment test scripts with explicit wait logic before closing driver.");
+        }
+    }
+
+    @Override
+    public void close() {
+        waitForMessageQueueEmpty();
+        super.close();
+    }
+
+    @Override
+    public void quit() {
+        waitForMessageQueueEmpty();
+        super.quit();
+    }
+
+
+
 }

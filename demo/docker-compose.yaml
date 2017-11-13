@@ -82,7 +82,7 @@ services:
       - /bin/sh
       - -c
       - |
-          apt-get install lsof &
+          apt-get -qq -y install lsof net-tools &
           wait $$!
           sed -i 's/agent.server.port=7100/agent.server.port=7101/g' /neoload6.1/conf/agent.properties &
           wait $$!
