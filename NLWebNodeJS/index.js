@@ -13,7 +13,7 @@ console.log('NeoLoad flattener RESTful API server started on: ' + port);
 //app.use(bodyParser.urlencoded({ extended: true }));
 //app.use(bodyParser.json());
 
-var nlwapikey = argv.apikey || process.env.NLWAPIKEY;
+var nlwapikey = argv.apikey || process.env.npm_config_apikey || process.env.NLWAPIKEY;
 var proxy = argv.proxy;
 
 if(!nlwapikey) { throw new Error("You must define your NeoLoad Web API key, either as a system environment variable called 'NLWAPIKEY' or as the 'apikey' argument."); }
@@ -36,6 +36,12 @@ console.log('   curl http://localhost:'+port+'/transactions?test=a3d00789-67c1-4
 console.log('')
 console.log('Waiting for client connections...')
 
+
+app.use(function(req, res, next) {
+  res.header("Access-Control-Allow-Origin", "*");
+  res.header("Access-Control-Allow-Headers", "Origin, X-Requested-With, Content-Type, Accept");
+  next();
+});
 
 app.route('/tests')
   .get(function(req, res) {
@@ -112,8 +118,8 @@ function writePoints(req, res, category) {
         });
         res.json({
           category: category,
-          tests: agg_tests.values(),
-          elements: agg_elements.values(),
+          tests: agg_tests.values().filter(v => v != null),
+          elements: agg_elements.values().filter(v => v != null),
           points: simplified
         });
       }
@@ -153,6 +159,4 @@ Object.prototype.renameProperty = function (oldName, newName) {
     }
     return this;
 };
-
-
 app.listen(port);

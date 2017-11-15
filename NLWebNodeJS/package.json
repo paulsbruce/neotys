@@ -2,13 +2,15 @@
   "name": "nlwebnodejs",
   "version": "1.0.0",
   "description": "A simple local web service client to flatten API structures to 2D/tabular/CSV formats.",
-  "main": "index.js",
   "scripts": {
+    "apiconnector": "node index.js --port 9094 --host neoload-api.saas.neotys.com",
+    "start": "node node_modules/npm-run-all/bin/npm-run-all --parallel apiconnector tableau",
+    "tableau": "node tableau/server.js --rootDir tableau",
     "test": "echo \"Error: no test specified\" && exit 1"
   },
   "repository": {
     "type": "git",
-    "url": "git://github.com/paulsbruce/neotys.git"
+    "url": "git+https://github.com/paulsbruce/neotys.git"
   },
   "author": "Paul Bruce",
   "license": "ISC",
@@ -16,11 +18,13 @@
     "body-parser": "^1.18.2",
     "cross-fetch": "^1.1.1",
     "express": "^4.16.2",
+    "fs": "0.0.1-security",
     "hashmap": "^2.3.0",
     "http": "0.0.0",
     "http-proxy-agent": "^2.0.0",
     "https-proxy-agent": "^2.1.0",
     "json2csv": "^3.11.5",
+    "path": "^0.12.7",
     "promise": "^8.0.1",
     "swagger-client": "^3.3.3",
     "url": "^0.11.0",
