@@ -3,7 +3,7 @@
   "version": "1.0.0",
   "description": "A simple local web service client to flatten API structures to 2D/tabular/CSV formats.",
   "scripts": {
-    "apiconnector": "node index.js --port 9094 --host neoload-api.saas.neotys.com",
+    "apiconnector": "node index.js --port 9094",
     "start": "node node_modules/npm-run-all/bin/npm-run-all --parallel apiconnector tableau",
     "tableau": "node tableau/server.js --rootDir tableau",
     "test": "echo \"Error: no test specified\" && exit 1"
@@ -24,6 +24,7 @@
     "http-proxy-agent": "^2.0.0",
     "https-proxy-agent": "^2.1.0",
     "json2csv": "^3.11.5",
+    "npm-run-all": "^4.1.2",
     "path": "^0.12.7",
     "promise": "^8.0.1",
     "swagger-client": "^3.3.3",

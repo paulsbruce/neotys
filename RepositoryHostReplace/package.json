@@ -1,0 +1,17 @@
+{
+  "name": "repositoryhostreplace",
+  "version": "1.0.0",
+  "description": "",
+  "main": "HostReplace.js",
+  "scripts": {
+    "test": "echo \"Error: no test specified\" && exit 1"
+  },
+  "author": "",
+  "license": "ISC",
+  "dependencies": {
+    "fs-extra": "^5.0.0",
+    "xmldom": "^0.1.27",
+    "xpath": "0.0.27",
+    "yargs": "^10.0.3"
+  }
+}

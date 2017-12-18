@@ -14,7 +14,7 @@ module.exports = {
   }
 };
 
-function NLWAPI(apiKey,host) {
+function NLWAPI(apiKey, host) {
   this.https = true;
   this.host = host ? host : "neoload-api.saas.neotys.com";
   this.apiKey = apiKey;
@@ -32,22 +32,26 @@ function NLWAPI(apiKey,host) {
   }
 
   this.getClient = function() {
-    return Swagger("http"+(this.https ? "s" : "")+"://"+this.host+"/explore/swagger.yaml", {
-      userFetch: (url, opts) => {
-        var o = opts ? opts : {};
-        if (this.proxySpec != null)
-          o.agent = new HttpsProxyAgent(this.proxySpec);
-        return fetch(url, o);
-      },
-      requestInterceptor: (req) => {
-        req.headers['accountToken'] = this.getApiKey();
-        if (this.proxySpec != null)
-          req.agent = new HttpsProxyAgent(this.proxySpec);
-      },
-      responseInterceptor: (res) => {
-        //console.log(res);
-      }
-    });
+    try {
+      return Swagger("http"+(this.https ? "s" : "")+"://"+this.host+"/explore/swagger.yaml", {
+        userFetch: (url, opts) => {
+          var o = opts ? opts : {};
+          if (this.proxySpec != null)
+            o.agent = new HttpsProxyAgent(this.proxySpec);
+          return fetch(url, o);
+        },
+        requestInterceptor: (req) => {
+          req.headers['accountToken'] = this.getApiKey();
+          if (this.proxySpec != null)
+            req.agent = new HttpsProxyAgent(this.proxySpec);
+        },
+        responseInterceptor: (res) => {
+          //console.log(res);
+        }
+      });
+    } catch(e) {
+      throw e;
+    }
   };
 
   this.createOptions = function(url) {
@@ -77,14 +81,23 @@ function NLWAPI(apiKey,host) {
 
   this.REQUEST_FIELDS = 'AVG_DURATION,MIN_DURATION,MAX_DURATION,COUNT,THROUGHPUT,ELEMENTS_PER_SECOND,ERRORS,ERRORS_PER_SECOND,ERROR_RATE,AVG_TTFB,MIN_TTFB,MAX_TTFB'.split(',');
 
-  this.points = function(element) {
+  this.points = function(element, since) {
     return this.getClient().then(cli => {
       return cli.apis.Results.GetTestElementsPoints({
         testId: element.test.id,
         elementId: element.id,
         statistics: this.REQUEST_FIELDS.join(',')
       }).then(set => {
-        return set.body.map(line => {
+        return set.body
+          .filter(line => {
+            var to = element.test.startDate + line.from;
+            return (
+               since<=0
+               ||
+               (line.from > 0 && (to <= 0 || to > since))
+            );
+          })
+          .map(line => {
           line.test = element.test;
           line.element = element;
           return line;

@@ -1,3 +1,5 @@
+var wdcrowid_colname = "wdcrowid";
+
 function initWDC() {
     var myConnector = tableau.makeConnector();
 
@@ -6,7 +8,8 @@ function initWDC() {
       var tableSchema = {
           id: "neoloadFeed",
           alias: "Neoload Performance Testing Data",
-          columns: getSchemaArray()
+          columns: getSchemaArray(),
+          incrementColumnId: wdcrowid_colname
       };
 
       schemaCallback([tableSchema]);
@@ -16,17 +19,28 @@ function initWDC() {
 
     myConnector.getData = function (table, doneCallback) {
 
-      $.getJSON(tableau.connectionData, function(resp) {
+      var url = tableau.connectionData;
+
+      var inc = table.incrementValue;
+      var dt = Date.parse(inc);
+      tableau.log(inc + ":" + dt);
+      if(inc && !isNaN(dt)) url += '&since='+dt;
+
+      tableau.log(url);
+
+      $.getJSON(url, function(resp) {
 
           var points = resp.points,
               tableData = [];
 
           points = points.map(function(p){
-            var testName = resp.tests.filter(function(t) { return t.id==p.test; })[0].name;
-            var elementName = resp.elements.filter(function(e) { return e.id==p.element; })[0].name;
+            p.testId = p.test;
+            p.elementId = p.element;
+            p.test = resp.tests.filter(function(t) { return t.id==p.testId; })[0].name;
+            p.element = resp.elements.filter(function(e) { return e.id==p.elementId; })[0].name;
             p.category = resp.category;
-            p.test = testName;
-            p.element = elementName;
+            p[wdcrowid_colname] = p.from;
+            p.ROW_ID = [p.category,p.testId,p.elementId,p.from].join("|");
             return p;
           });
 
@@ -34,9 +48,10 @@ function initWDC() {
           for (var i = 0, len = points.length; i < len; i++) {
             var point = points[i];
             var item = {}
-            var data = getSchemaArray().map(function(schema) {
-              item[schema.id] = point[schema.id];
-            });
+            var data = getSchemaArray()
+                  .map(function(schema) {
+                    item[schema.id] = point[schema.id];
+                  });
               tableData.push(item);
           }
 
@@ -142,6 +157,12 @@ function getSchemaArray() {
   }, {
     id: "MIN_TTFB",
     dataType: tableau.dataTypeEnum.int
+  }, {
+    id: wdcrowid_colname,
+    dataType: tableau.dataTypeEnum.datetime
+  }, {
+    id: "ROW_ID",
+    dataType: tableau.dataTypeEnum.string
   }];
   return cols;
 }

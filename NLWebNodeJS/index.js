@@ -14,11 +14,12 @@ console.log('NeoLoad flattener RESTful API server started on: ' + port);
 //app.use(bodyParser.json());
 
 var nlwapikey = argv.apikey || process.env.npm_config_apikey || process.env.NLWAPIKEY;
+var nlwapihost = argv.host || process.env.npm_config_host || process.env.NLWAPIHOST;
 var proxy = argv.proxy;
 
 if(!nlwapikey) { throw new Error("You must define your NeoLoad Web API key, either as a system environment variable called 'NLWAPIKEY' or as the 'apikey' argument."); }
 
-var nlw = NLWAPI.create(nlwapikey, argv.host);
+var nlw = NLWAPI.create(nlwapikey, nlwapihost);
 if(proxy) nlw.proxy(proxy);
 
 console.log('Available operations from http://localhost:' + port)
@@ -74,6 +75,7 @@ app.route('/requests')
 function writePoints(req, res, category) {
   var agg_tests = new HashMap();
   var agg_elements = new HashMap();
+  var since = parseInt(req.query.since || -1);
   filterTests(req)
     .then(tests => {
       return Promise.all(
@@ -90,7 +92,7 @@ function writePoints(req, res, category) {
       return Promise.all(
         els.map(el => {
           agg_elements.set(el.id, el);
-          return nlw.points(el);
+          return nlw.points(el, since);
         })
       )
     }).then(o => [].concat.apply([], o)) // squash element request values
@@ -120,6 +122,9 @@ function writePoints(req, res, category) {
           category: category,
           tests: agg_tests.values().filter(v => v != null),
           elements: agg_elements.values().filter(v => v != null),
+          metadata: {
+            pointCount: simplified.length
+          },
           points: simplified
         });
       }
@@ -132,12 +137,23 @@ function isCSV(req) {
 
 function filterTests(req, allowNoFilter) {
   var nameOrId = req.query.test;
+  var status = req.query.status;
   var allowNoFilter = (allowNoFilter != undefined ? allowNoFilter==true : false);
-  if(!nameOrId && !allowNoFilter)
+  if((!nameOrId && !status) && !allowNoFilter)
     throw new Error("You must specify a test filter to use this operation.")
+  if((status+"").toLowerCase() == "terminated")
+    throw new Error("Filtering on status=terminated would produce too much data.")
   return nlw.tests().then(r => {
     var tests = r.body;
+    if(status) tests = tests.filter(function(test) {
+      return (
+          (test.status+"").toLowerCase() == (status+"").toLowerCase()
+          ||
+          (test.qualityStatus+"").toLowerCase() == (status+"").toLowerCase()
+      );
+     });
     if(nameOrId) tests = tests.filter(function(test) {
+      var endDate = parseInt(test.endDate || 0);
       return (
         (test.name+"").toLowerCase().indexOf((nameOrId+"").toLowerCase()) > -1
         ||

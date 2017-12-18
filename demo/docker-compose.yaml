@@ -71,7 +71,7 @@ services:
     depends_on:
       - nts
     #command: python web/manage_dev.py runserver 0.0.0.0:8000
-    image: "neotys/neoload-loadgenerator"
+    image: "neotys/neoload-loadgenerator:6.1"
     ports:
       - "7101:7101"
       - "1701"
@@ -98,7 +98,7 @@ services:
     depends_on:
       - nts
     #command: python web/manage_dev.py runserver 0.0.0.0:8000
-    image: "neotys/neoload-loadgenerator"
+    image: "neotys/neoload-loadgenerator:6.1"
     ports:
       - "7102:7102"
       - "1702"
