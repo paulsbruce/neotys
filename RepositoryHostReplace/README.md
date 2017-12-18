@@ -1,4 +1,4 @@
-#Repository Host Replace
+#Repository Host Replace#
 ===================
 
 
@@ -9,6 +9,7 @@ Remove unnecessary server duplicates from NeoLoad project; occurs when original
 > **Usage:**
 
 > npm install
+
 > node HostReplace.js --repositoryFilepath ~/neoload_projects/YourProject/config/repository.xml
 >                     --hostFind someserver.yourdomain.com
 > [optional]          --hostReplaceWith someotherserver.yourdomain.com
