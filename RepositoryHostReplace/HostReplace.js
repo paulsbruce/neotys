@@ -20,6 +20,7 @@
 const fs = require("fs-extra");
 const xmldom = require("xmldom");
 const xpath = require('xpath');
+var select = require('xpath.js')
 const argv = require("yargs").argv;
 
 var filePath = argv.repositoryFilepath;
@@ -41,7 +42,7 @@ var dtd_b = oldXml.indexOf("]>");
 var dtd = oldXml.substring(dtd_a, dtd_b+2);
 
 var findTheReplacement = !(hostReplaceWith && (hostReplaceWith+"").length > 0);
-var hostReplace = xpath.select("//http-server[@uid='"+(findTheReplacement ? hostFind : hostReplaceWith)+"']", doc);
+hostReplace = select(doc, "//http-server[@uid='"+(findTheReplacement ? hostFind : hostReplaceWith)+"']");
 
 if(hostReplace.length > 0)
   hostReplaceWith = hostReplace[0].getAttribute('uid');
@@ -52,33 +53,44 @@ else {
     throw new Error("Could not find a host in this project that matches the 'hostReplaceWith' value specified.")
 }
 
+var iTotalReplacements = 0;
+
 for(var i=0; i<10; i++) {
   var serverUid = hostFind+'_'+i;
-  var nodes = xpath.select("//http-action[@serverUid='"+serverUid+"']", doc);
+  var nodes = select(doc, "//http-action[@serverUid='"+serverUid+"']");
   if(nodes.length > 0) {
+    console.log('...replacing references to extraneous host names...')
     for(var j=0; j<nodes.length; j++) {
       var node = nodes[j];
       node.setAttribute('serverUid', hostReplaceWith);
+      iTotalReplacements++;
     }
     console.log('nodes: '+nodes.length)
-
-    // having replaced all references to it, remove this node
-    var ndServer = xpath.select1("//http-server[@uid='"+serverUid+"']", doc);
-    ndServer.parentNode.removeChild(ndServer);
   }
+  // having replaced all references to it, remove this node
+  var ndServer = select(doc, "//http-server[@uid='"+serverUid+"']");
+  if(ndServer.length > 0)
+    ndServer[0].parentNode.removeChild(ndServer[0]);
 }
 
-var serial = new xmldom.XMLSerializer();
-var newXml = serial.serializeToString(doc);
+if(iTotalReplacements > 0) {
+  console.log('constructing new doc')
 
-newXml = newXml.replace('<!DOCTYPE repository>',dtd);
+  var serial = new xmldom.XMLSerializer();
+  var newXml = serial.serializeToString(doc);
+  console.log("newXml: " + newXml.length)
 
-if(newXml.indexOf('<!ELEMENT')<0)
-  throw new Error('doctype details not preserved')
+  newXml = newXml.replace('<!DOCTYPE repository>',dtd);
 
-fs.copySync(filePath, backupPath);
+  if(newXml.indexOf('<!ELEMENT')<0)
+    throw new Error('doctype details not preserved')
 
-fs.writeFileSync(filePath, newXml, {
-  mode: parseInt('0755', 8),
-  flag: 'w'
-});
+  fs.copySync(filePath, backupPath);
+
+  fs.writeFileSync(filePath, newXml, {
+    mode: parseInt('0755', 8),
+    flag: 'w'
+  });
+} else {
+  console.log('no replacements necessary in ' + filePath)
+}
