@@ -1,0 +1,345 @@
+<!doctype html>
+
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <title>NLWCompare Report</title>
+
+  <link rel="stylesheet" href="static/styles.css?v=1.0">
+
+  <script type="text/javascript">
+
+  function init() {
+
+    let params = (new URL(document.location)).searchParams;
+
+    var url = 'api/comparison?baseline='+params.get("baseline")+'&candidate='+params.get("candidate")
+    $('#apisrc').attr('href',url);
+    toggleDump();
+
+    if(!isEmpty($("#dump").val()))
+      processData();
+    else if(isEmpty(params.get("baseline")))
+      alert("This report requires a query parameter 'baseline' corresponding to a valid NeoLoad Web test ID.")
+    else if(isEmpty(params.get("candidate")))
+      alert("This report requires a query parameter 'candidate' corresponding to a valid NeoLoad Web test ID.")
+    else
+    {
+      $.ajax({
+          url: url,
+          type: 'get',
+          dataType: 'json',
+          cache: false,
+          success: function(data) {
+            $("#dump").val(JSON.stringify(data,null,'\t'))
+            processData();
+          },
+          error: function(xhr, status, error) {
+            alert("An error occurred while obtaining report data.\n\n" + error)
+          },
+          complete: function(xhr, status) {
+            $(".preloader").hide();
+            //if(status != "success")
+          },
+          async:true,
+      });
+    }
+  }
+
+  function toggleDump() {
+    var isVisible = $('#dump').is(":visible");
+    $('#showDump').val((isVisible ? "Show" : "Hide") + " JSON dump")
+    if(isVisible)
+      $('#dump').css('height','80px').hide()
+    else
+      $('#dump').css('height','800px').show()
+  }
+  function isEmpty(val) {
+    return (val == undefined || val == null || (val+"").trim().length < 1)
+  }
+
+  function processData(data) {
+    $(".preloader").hide();
+
+    var summaryTemplate = $("#baseSummary").html()
+    $("#candSummary").html(summaryTemplate.replaceAll('"base','"cand'));
+    $("#candTemplateName").html("Candidate")
+
+    var data = JSON.parse($("#dump").val())
+
+    populateSummary('base',data.baselineSummary)
+    populateSummary('cand',data.candidateSummary)
+
+    // go-no-go
+
+    populatePercentileItems($("#topTransactions"),data.topTransactions,'Transaction')
+
+    populatePercentileItems($("#topResponses"),data.topRequests,'Request')
+
+    populatePercentileItems($("#errorRates"),data.errorsByRequest,'Failed Request','path','baselineFailureCount','candidateFailureCount','varianceInFailureCount')
+
+    populatePercentileItems($("#allTransactions"),data.transactionVariances,'Transaction')
+
+  }
+
+  function populateSummary(uiPrefix,data) {
+    $('#'+uiPrefix+'Name').text(data.name)
+    $('#'+uiPrefix+'StartDate').text((new Date(data.startDate)).toLocaleString())
+    $('#'+uiPrefix+'Duration').text(time_convert(data.duration / 1000 / 60))
+    $('#'+uiPrefix+'TPS').text(round(data.transactionsPerSecond,2))
+    $('#'+uiPrefix+'AvgRespTime').text(time_convert(data.averageResponseTime / 60,2))
+    $('#'+uiPrefix+'Throughput').text(round(data.throughput,3)+'Mbs')
+    $('#'+uiPrefix+'ErrorCount').text(data.errorCount)
+  }
+  function populateByTemplate(targetElement,items,fItemTemplate,fHeaderTemplate,fFooterTemplate) {
+    var html = '';
+    if(fHeaderTemplate != undefined && fHeaderTemplate != null && typeof fHeaderTemplate == 'function') html += fHeaderTemplate()
+    $(items).each(function(i) {
+      html += fItemTemplate(this);
+    })
+    if(fFooterTemplate != undefined && fFooterTemplate != null && typeof fFooterTemplate == 'function') html += fFooterTemplate()
+    targetElement.html(html)
+  }
+  function populatePercentileItems(targetElement,items,itemType,labelKey,baseKey,candKey,varianceKey) {
+    labelKey = isEmpty(labelKey) ? 'path' : labelKey;
+    baseKey = isEmpty(baseKey) ? 'basePercentile' : baseKey;
+    candKey = isEmpty(candKey) ? 'candPercentile' : candKey;
+    varianceKey = isEmpty(varianceKey) ? 'varianceInPercentile' : varianceKey;
+
+    return populateByTemplate(targetElement,items,function(item) {
+      var gt = (item[baseKey]<item[candKey]);
+      var lt = (item[baseKey]>item[candKey]);
+      var eq = (item[baseKey]==item[candKey]);
+      var baseClass = eq ? 'non-value' : lt ? 'bad-value' : 'good-value';
+      var candClass = eq ? 'non-value' : gt ? 'bad-value' : 'good-value';
+      var pathClass = candClass;
+      return '<div class="rTableRow">'+
+              '<div class="rTableCell row-label '+pathClass+'">'+truncateText(item[labelKey])+'</div>'+
+              '<div class="rTableCell '+baseClass+' center">'+round(item[baseKey],3)+'</div>'+
+              '<div class="rTableCell '+candClass+' center">'+round(item[candKey],3)+'</div>'+
+              '<div class="rTableCell '+candClass+'">'+formatPercent(item[varianceKey],2)+'</div>'+
+              '</div>'
+    },function() {
+      return '<div class="rTable">'+
+              '<div class="rTableHeading">'+
+              '<div class="rTableCell">'+itemType+'</div>'+
+              '<div class="rTableCell center">Baseline</div>'+
+              '<div class="rTableCell center">Candidate</div>'+
+              '<div class="rTableCell"><em>Var</em></div>'+
+              '</div>'
+    },function() {
+      return '</div>'
+    })
+  }
+  function truncateText(orig,len) {
+    var max = 40;
+    if(len == undefined || len == null || len < 1) len = max;
+    var s = orig;
+    if(s.length > len)
+    {
+      var half1 = Math.round(len / 2);
+      var half2 = Math.round(len / 2);
+      s = s.substring(0,half1) + '...' + s.substring(s.length-half2,s.length);
+    }
+    return s;
+  }
+  function round(num, scale) {
+    if(scale == undefined || scale == null || scale < 0) scale = 0;
+    if(!("" + num).includes("e")) {
+      return +(Math.round(num + "e+" + scale)  + "e-" + scale);
+    } else {
+      var arr = ("" + num).split("e");
+      var sig = ""
+      if(+arr[1] + scale > 0) {
+        sig = "+";
+      }
+      return +(Math.round(+arr[0] + "e" + sig + (+arr[1] + scale)) + "e-" + scale);
+    }
+  }
+  String.prototype.replaceAll = function(search, replacement) {
+    var target = this;
+    return target.replace(new RegExp(search, 'g'), replacement);
+  };
+  function time_convert(num,secRound)
+  {
+    if(secRound == undefined || secRound == null || secRound < 0) secRound = 0;
+    var hours = Math.floor(num / 60);
+    var minutes = num % 60;
+    return (hours > 0 ? hours + "h:" : "") + round(minutes,secRound) + 'm';
+  }
+  function formatPercent(value,scale) {
+    if(scale == undefined || scale == null || scale < 0) scale = 0;
+    var val = value;
+    if(val > 1 || val < -1) val /= 100;
+    return round(value * 100,scale) + '%'
+  }
+
+  </script>
+</head>
+
+<body style="padding:1em;">
+  <h1>NeoLoad Performance Comparison</h1>
+
+  <div class="preloader">
+    <img src="static/application-loading.gif" width="128" height="128" alt="loading..." />
+  </div>
+
+  <div class="colbox">
+    <div class="twocol" id="baseSummary">
+      <div class="rTable">
+        <div class="rTableHeading">
+          <div class="rTableCell row-label right-align"><h3 id="baseTemplateName">Baseline</h3></div>
+          <div class="rTableCell [[summaryClass]]"><span id="baseName"></span></div>
+        </div>
+        <div class="rTableRow">
+          <div class="rTableCell row-label right-align">TPS</div>
+          <div class="rTableCell [[summaryClass]]"><span id="baseTPS"></span></div>
+        </div>
+        <div class="rTableRow">
+          <div class="rTableCell row-label right-align">Started</div>
+          <div class="rTableCell [[summaryClass]]"><span id="baseStartDate"></span></div>
+        </div>
+        <div class="rTableRow">
+          <div class="rTableCell row-label right-align">Duration</div>
+          <div class="rTableCell [[summaryClass]]"><span id="baseDuration"></span></div>
+        </div>
+        <div class="rTableRow">
+          <div class="rTableCell row-label right-align">Avg Resp Time</div>
+          <div class="rTableCell [[summaryClass]]"><span id="baseAvgRespTime"></span></div>
+        </div>
+        <div class="rTableRow">
+          <div class="rTableCell row-label right-align">Throughput</div>
+          <div class="rTableCell [[summaryClass]]"><span id="baseThroughput"></span></div>
+        </div>
+        <div class="rTableRow">
+          <div class="rTableCell row-label right-align">Errors</div>
+          <div class="rTableCell [[summaryClass]]"><span id="baseErrorCount"></span></div>
+        </div>
+      </div>
+    </div>
+    <div class="twocol" id="candSummary">
+    </div>
+  </div>
+
+  <div style="clear:both;float:none;">&nbsp;</div>
+
+  <h2>Top Issues</h2>
+
+  <div class="colbox">
+    <div class="twocol">
+      <div class="row">
+        <h3>Transactions (var in req perc)</h3>
+      </div>
+      <div id="topTransactions"></div>
+      <div class="row">
+        <h3>Responses (var in avg duration)</h3>
+      </div>
+      <div id="topResponses"></div>
+    </div>
+    <!--div class="threecol">
+      <div class="row">
+        <h3>Call Count (by Host)</h3>
+      </div>
+      <div>
+        [not yet implemented]
+      </div>
+    </div-->
+    <div class="twocol">
+      <div class="row">
+        <h3>Error Rate</h3>
+      </div>
+      <div id="errorRates"></div>
+    </div>
+  </div>
+
+  <div style="clear:both;float:none;">&nbsp;</div>
+
+  <h2>All Elements (Details)</h2>
+
+  <div class="colbox">
+    <div class="onecol">
+      <div id="allTransactions"></div>
+    </div>
+  </div>
+
+  <div style="clear:both;float:none;">&nbsp;</div>
+
+  <a id="apisrc" href="#" target="_blank">API Source</a>
+
+  <div style="clear:both;float:none;">&nbsp;</div>
+
+  <button id="showdump" onclick="toggleDump()">Show JSON dump</button>
+
+  <textarea id="dump" style="width:100%;height:80px;"></textarea>
+
+  <script async src="https://ajax.googleapis.com/ajax/libs/jquery/3.3.1/jquery.min.js" onload="init()"></script>
+
+  <script src="https://ajax.googleapis.com/ajax/libs/d3js/5.7.0/d3.min.js"></script>
+
+  <style type="text/css">
+
+  .preloader {
+          width: 100%;
+          height: 100%;
+          background:#fffc;
+
+          position:absolute; /*it can be fixed too*/
+          left:0; right:0;
+          top:0; bottom:0;
+          margin:auto;
+          text-align: center;
+          padding-top:40%;
+          z-index:10000;
+
+          /*this to solve "the content will not be cut when the window is smaller than the content": */
+          max-width:100%;
+          max-height:100%;
+          overflow:auto;
+      }
+
+  div.colbox {
+    float:none;
+  }
+  div.twocol {
+    width:50%;
+    clear:none;
+    float:left;
+  }
+  div.row {
+    width:100%;
+    clear:both;
+    padding:2pt;
+  }
+  div.row > label {
+    color:gray;
+  }
+  div.row > span {
+    color:blue;
+    margin-left:2pt;
+  }
+  div.threecol {
+    width:33%;
+    clear:none;
+    float:left;
+  }
+
+  .rTable { display: table; }
+  .rTableRow { display: table-row; }
+  .rTableHeading { display: table-header-group; }
+  .rTableBody { display: table-row-group; }
+  .rTableFoot { display: table-footer-group; }
+  .rTableCell, .rTableHead { display: table-cell; }
+
+  .rTableCell, .rTableHead { padding:0.2em }
+  .row-label { color:gray; padding-right:1em; }
+  .right-align { text-align:right; }
+  .center { text-align:center; }
+  .rTableCell > span { color:blue; }
+
+  .non-value { color:gray; }
+  .good-value { color:green; }
+  .bad-value { color:red; }
+
+  </style>
+</body>
+</html>
