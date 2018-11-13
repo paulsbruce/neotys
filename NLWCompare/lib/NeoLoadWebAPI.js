@@ -47,7 +47,9 @@ function NLWAPI(apiKey, host, ssl) {
   const retryInMs = 1000;
 
   this.httpResponseCache = new HashMap();
-  if(true) {
+  var shouldCache = fs.existsSync(httpCachePath);
+
+  if(shouldCache) {
     // resume from file system
     console.log('checking cache');
     fs.readdirSync(httpCachePath).forEach(file => {
@@ -87,7 +89,7 @@ function NLWAPI(apiKey, host, ssl) {
               retryFetch(url, o).then(r => {
                 fetchesClosed += 1;
                 if(debugHttp) console.log('('+fetchesOpened+'/'+fetchesClosed+') Fetched: ' + url)
-                cacheHttpResponse(nlw, key, r);
+                if(shouldCache) cacheHttpResponse(nlw, key, r);
               }).catch(err => {
                 fetchesClosed += 1;
                 if(debugHttp || reportHttpFinalFailures) console.error('('+fetchesOpened+'/'+fetchesClosed+') Error: ' + err)
@@ -172,7 +174,6 @@ String.prototype.hashCode = function() {
 };
 
 function uncacheHttpResponse(nlw, file) {
-  return true;
   var o = JSON.parse(fs.readFileSync(file));
   if(o != undefined && o != null && o.key && o.value) {
     nlw.httpResponseCache.set(o.key, o.value);
@@ -180,7 +181,6 @@ function uncacheHttpResponse(nlw, file) {
     console.error('Uncaching error: ' + file)
 }
 function cacheHttpResponse(nlw, key, oValue) {
-  return true;
   nlw.httpResponseCache.set(key, oValue);
   // persist to file system
   var persisted = {
