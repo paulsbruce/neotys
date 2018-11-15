@@ -67,14 +67,12 @@ app.route('/api/comparison')
       topTransactions: {},
       topRequests: {},
       errorsByRequest: {},
-      /*
-      violations: [
-        { violationType: "OS" },
-        { violationType: "WebLogic" },
-        { violationType: "JMX" }
-      ],*/
-      transactionVariances: {}/*,
-      requests: {}*/
+      violations: [],
+      transactionVariances: {},
+      monitors: {}
+      /*,
+      requests: {}
+      */
     };
 
     Promise.all([
@@ -84,6 +82,12 @@ app.route('/api/comparison')
       promiseTestStatistics(candId).then(o => {
         body.candidateSummary = o
       }),
+      promiseMonitors(baseId,candId).then(o => {
+        body.monitors = o
+      }),
+      promiseViolations(baseId,candId).then(o => {
+        body.violations = o;
+      })/*,
       promiseErrorsByRequest(baseId,candId).then(o => {
         body.errorsByRequest = o
       }),
@@ -92,7 +96,7 @@ app.route('/api/comparison')
       }),
       promiseTopRequests(baseId,candId).then(o => {
         body.topRequests = o
-      })
+      }),
       /*,
       promiseRequestDetails(baseId,candId).then(o => {
         body.requests = o
@@ -147,6 +151,9 @@ app.route('/api/comparison')
   var agg_requests = new HashMap();
   var request_values = new HashMap();
   var request_points = new HashMap();
+  var agg_monitors = new HashMap();
+  var monitor_values = new HashMap();
+  var monitor_points = new HashMap();
 
   app.route('/api/topTransactions')
     .get(function(req, res) {
@@ -270,7 +277,6 @@ app.route('/api/comparison')
         res.json(o)
       });
     });
-  var agg_requests = new HashMap();
   function promiseErrorsByRequest(baseId,candId) {
     var prom = getOrFillRequests(baseId,candId);
     return prom
@@ -369,14 +375,14 @@ app.route('/api/comparison')
                 if(candValues.length != 1) console.error('candValues is not a 1-sized array!!!')
                 baseAll = baseAll.concat(baseValues[0])
                 candAll = candAll.concat(candValues[0])
-                req.basePercentile = calcPercentile(baseValues[0])
-                req.candPercentile = calcPercentile(candValues[0])
+                req.basePercentile = calcPercentile(baseValues[0], o => o.AVG_DURATION)
+                req.candPercentile = calcPercentileByAvgDuration(candValues[0], o => o.AVG_DURATION)
                 req.varianceInPercentile = (req.basePercentile != 0 ? (req.candPercentile / req.basePercentile) - 1.0 : 0);
                 return req;
               });
           //tran.requests = reqs;
-          tran.basePercentile = calcPercentile(baseAll)
-          tran.candPercentile = calcPercentile(candAll)
+          tran.basePercentile = calcPercentileByAvgDuration(baseAll, o => o.AVG_DURATION)
+          tran.candPercentile = calcPercentileByAvgDuration(candAll, o => o.AVG_DURATION)
           tran.varianceInPercentile = (tran.basePercentile != 0 ? (tran.candPercentile / tran.basePercentile) - 1.0 : 0);
           if(baseAll.length < 1)
             console.error('tran['+tran.path+'] has no values, but '+reqs.length+' requests')
@@ -385,7 +391,8 @@ app.route('/api/comparison')
     }
   }
 
-  function calcPercentile(arr) {
+
+  function calcPercentile(arr,fMap) {
     if(arr == undefined || arr == null || !Array.isArray(arr)) {
       console.log('bad array passed to calcPercentile: ' + JSON.stringify(arr))
       return 0;
@@ -394,7 +401,7 @@ app.route('/api/comparison')
       if(arr.length < 1)
         return 0;
       else {
-        var values = arr.map(o => o.AVG_DURATION);
+        var values = arr.map(o => fMap(o));
         return get_percentile(90,values)
       }
     }
@@ -461,139 +468,263 @@ app.route('/api/comparison')
     }
   }
 
+  function getOrFillMonitors(baseId,candId) {
+    var agg = agg_monitors;
+    var fInner = function() {
+      if(agg.count() > 0) {
+        console.log('superfluous')
+        return Promise.resolve();
+      } else {
+        var fFill = function(testId,fStow,fStashVal) {
 
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-function writePoints(req, res, category) {
-  var agg_tests = new HashMap();
-  var agg_elements = new HashMap();
-  var since = parseInt(req.query.since || -1);
-  filterTests(req)
-    .then(tests => {
-      return Promise.all(
-        tests
-          .map(test => {
-            agg_tests.set(test.id,test);
-            return nlw.elements(test,category)
-            .then(els => els.filter(el => (el.id+"").indexOf("all-")<0));
-          }
-
-      ))
-    }).then(o => [].concat.apply([], o)) // squash test elements together
-    .then(els => {
-      return Promise.all(
-        els.map(el => {
-          agg_elements.set(el.id, el);
-          return nlw.points(el, since);
-        })
-      )
-    }).then(o => [].concat.apply([], o)) // squash element request values
-    .then(o => {
-      var simplified = o.map(i => {
-        i.from = new Date(i.test.startDate + i.from);
-        i.to = new Date(i.test.startDate + i.to);
-        return i;
-      })
-      if(isCSV(req))
-      {
-        simplified = simplified.map(i => {
-          i.category = category;
-          i.test = i.test.name;
-          i.element = i.element.name;
-          return i;
-        })
-        res.send(json2csv({ data: o, fields: ['from','to','test','element','category'].concat(nlw.REQUEST_FIELDS) }));
+          return new Promise(function(resolve,reject) {
+              var prom = nlw.monitors(testId)
+              .then(r => {
+                var rs = r.body;
+                stowMonitors(agg,rs,fStow)
+                return Promise.all(
+                    rs.map(function(el) {
+                      var key = el.path.join('|');
+                      var mon = agg_monitors.get(key);
+                      return Promise.all([
+                        /*nlw.monitorValues(testId, el.id)
+                        .then(p => {
+                          var vals = p.body;
+                          for(var k in vals) fStashVal(mon,vals,k);
+                        }),*/
+                        nlw.monitorPoints(testId, el.id)
+                        .then(p => {
+                          var points = p.body; // array of { AVG: 0 }
+                          monitor_points.set(testId+el.id, points);
+                        })
+                      ])
+                    })
+                  )
+              }).then(r => {
+                resolve(r)
+              });
+              return prom
+          })
+        }
+        return Promise.all([
+            fFill(baseId,function(el,mon) {
+              mon.baselineTestId = baseId;
+              mon.baselineMonitorId = el.id;
+              mon.baselineValues = {}
+            },function(mon,vals,k) {
+              mon.baselineValues[k]=vals[k]
+            }),
+            fFill(candId,function(el,mon) {
+              mon.candidateTestId = candId;
+              mon.candidateMonitorId = el.id;
+              mon.candidateValues = {}
+            },function(mon,vals,k) {
+              mon.candidateValues[k]=vals[k]
+            })
+          ])
       }
-      else {
-        simplified = simplified.map(i => {
-          i.test = i.test.id;
-          i.element = i.element.id;
-          return i;
-        });
-        res.json({
-          category: category,
-          tests: agg_tests.values().filter(v => v != null),
-          elements: agg_elements.values().filter(v => v != null),
-          metadata: {
-            pointCount: simplified.length
-          },
-          points: simplified
-        });
-      }
-    });
-}
-
-function isCSV(req) {
-  return ((req.query.format+"").toLowerCase() == "csv");
-}
-
-function filterTests(req, allowNoFilter) {
-  var nameOrId = req.query.test;
-  var status = req.query.status;
-  var allowNoFilter = (allowNoFilter != undefined ? allowNoFilter==true : false);
-  if((!nameOrId && !status) && !allowNoFilter)
-    throw new Error("You must specify a test filter to use this operation.")
-  if((status+"").toLowerCase() == "terminated")
-    throw new Error("Filtering on status=terminated would produce too much data.")
-  return nlw.tests().then(r => {
-    var tests = r.body;
-    if(status) tests = tests.filter(function(test) {
-      return (
-          (test.status+"").toLowerCase() == (status+"").toLowerCase()
-          ||
-          (test.qualityStatus+"").toLowerCase() == (status+"").toLowerCase()
-      );
-     });
-    if(nameOrId) tests = tests.filter(function(test) {
-      var endDate = parseInt(test.endDate || 0);
-      return (
-        (test.name+"").toLowerCase().indexOf((nameOrId+"").toLowerCase()) > -1
-        ||
-        (test.id+"").toLowerCase() == (nameOrId+"").toLowerCase()
-      );
-    });
-    return tests;
-  });
-}
-Object.prototype.renameProperty = function (oldName, newName) {
-     // Do nothing if the names are the same
-     if (oldName == newName) {
-         return this;
-     }
-    // Check for the old property name to avoid a ReferenceError in strict mode.
-    if (this.hasOwnProperty(oldName)) {
-        this[newName] = this[oldName];
-        delete this[oldName];
     }
-    return this;
-};
+    return fInner()
+        .then(p => {
+            return agg_monitors.values()
+              .filter(v => { return v != null; })
+              .map(mon => {
+                var basePoints = monitor_points.get(mon.baselineTestId+mon.baselineMonitorId)
+                var candPoints = monitor_points.get(mon.candidateTestId+mon.candidateMonitorId)
+                mon.basePercentile = calcPercentile(basePoints, o => o.AVG)
+                mon.candPercentile = calcPercentile(candPoints, o => o.AVG)
+                mon.varianceInPercentile = (mon.basePercentile != 0 ? (mon.candPercentile / mon.basePercentile) - 1.0 : 0);
+                mon.meta = deriveMonitorMeta(mon)
+              })
+        })
+  }
+
+  function promiseMonitors(baseId,candId) {
+    var prom = getOrFillMonitors(baseId,candId);
+    return prom.then(r => {
+      applyViolationCalcs()
+      return agg_monitors.values()
+              .filter(v => { return v != null; })
+              .sort(function(a,b) { return a.path.localeCompare(b.path); })
+    })
+    /*.then(r => {
+      return agg_requests.values()
+              .filter(v => { return v != null; })
+              .sort(b.path)
+              .slice(0,5)
+    })*/
+  }
+
+  function deriveMonitorMeta(mon) {
+    var cat = 'Other'
+    var subcat = null;
+    var lc = mon.path.toLowerCase();
+    var arr = mon.path.split('|')
+    var ext = null;
+    if(lc.indexOf('linux') > -1 || lc.indexOf('windows') > -1)
+      cat = 'OS'
+    else if(lc.indexOf('jvm') > -1)
+      cat = 'JMX'
+    else if(lc.indexOf('weblogic') > -1) {
+      cat = 'WebLogic';
+      //preecomad01.preprod.yourdomain.com_WebLogic Counters/weblogic/youfapps36/JDBC/DataSource/YOURSVCS/ActiveConnectionsHighCount
+      ext = {
+        host: arr[0].split('_')[0],
+        node: arr[2],
+        type: arr[3],
+        target: arr[4]+'/'+arr[5]
+      }
+      subcat = ext.type
+    }
+    var label = arr[arr.length-1]
+    var ret = {
+      category: cat,
+      subcategory: subcat,
+      label: label
+    };
+    if(ext != null) ret.ext = ext;
+    return ret;
+  }
+
+  function getMonitorViolationRules() {
+    return [
+      {
+        name: 'OS Counters >10% variance',
+        isCritical: function(mon) { return osCriticals().includes(mon.meta.label) },
+        isInViolation: function(mon) { return mon.meta.category == 'OS' && Math.abs(mon.varianceInPercentile) > 0.10 }
+      },
+      {
+        name: 'WebLogic Counters >10% variance',
+        isCritical: function(mon) { return wlCriticals().includes(mon.meta.label) },
+        isInViolation: function(mon) { return mon.meta.category == 'WebLogic' && Math.abs(mon.varianceInPercentile) > 0.10 }
+      },
+      {
+        name: 'JMX Counters >10% variance',
+        isCritical: function(mon) { return jmxCriticals().includes(mon.meta.label) },
+        isInViolation: function(mon) { return mon.meta.category == 'JMX' && Math.abs(mon.varianceInPercentile) > 0.05 }
+      }
+    ]
+  }
+
+  function osCriticals() { return [
+    '% User Memory',
+    'Swap Used',
+    'CPU User',
+    'Process Runnable'
+  ]}
+  function wlCriticals() { return [
+    'ActiveConnectionsHighCount',
+    'ActiveConnectionsAverageCount',
+    'CurrCapacity',
+    'FailedReserveRequestCount',
+    'HighestNumUnavailable',
+    'LeakedConnectionCount',
+    'PrepStmtCacheAccessCount',
+    'ReserveRequestCount',
+    'WaitingForConnectionCurrentCount',
+    'WaitingForConnectionHighCount',
+    'ConnectionDelayTime',
+    'ConnectionsTotalCount',
+    'NumUnavailable',
+    'HoggingThreadCount',
+    'HoggingThreadCount',
+    'StruckThreadCount',
+  ]}
+  function jmxCriticals() { return ['HeapFreeCurrent'] }
+
+  function applyViolationCalcs() {
+    getMonitorViolationRules().map(rule => {
+      agg_monitors.values()
+          .filter(v => { return v != null; })
+          .filter(v => { return rule.isInViolation(v); })
+          .forEach(mon => {
+            if(mon.violations == null || mon.violations == null) mon.violations = []
+            mon.violations.push({
+              rule: rule.name,
+              critical: rule.isCritical(mon)
+            })
+          })
+    })
+  }
+  function promiseViolations(baseId,candId) {
+    var prom = getOrFillMonitors(baseId,candId);
+    var doc = []
+    return prom
+    .then(r => {
+      console.log('applying calcs')
+      applyViolationCalcs()
+      agg_monitors.values().filter(v => { return v != null; })
+          .filter(mon => { return mon.violations && Array.isArray(mon.violations) })
+          .sort(function(a,b) {
+            var compareCat = (a.meta.category+"").localeCompare(b.meta.category)
+            var compareSubcat = (a.meta.subcategory+"").localeCompare(b.meta.subcategory)
+            var compareLabel = (a.meta.label+"").localeCompare(b.meta.label)
+            return compareCat || compareSubcat || compareLabel
+          })
+          .forEach(mon => {
+            var typeNode = doc.filter(d => d.violationType == mon.meta.category);
+            if(typeNode.length < 1) {
+              typeNode = { violationType: mon.meta.category }
+              doc.push(typeNode)
+            } else
+              typeNode = typeNode[0]
+
+            if(typeNode.monitors == undefined || typeNode.monitors == null)
+              typeNode.monitors = []
+            typeNode.monitors.push(mon)
+          })
+      return doc;
+    })
+  }
+
+  function stowMonitors(agg,rs,funcSetValues) {
+    var results = rs;
+    for(var i=0; i<results.length; i++) {
+      var el = results[i];
+      var key = el.path.join('|');
+      var mon;
+      if(agg.has(key))
+        mon = agg.get(key);
+      else {
+        mon = {
+          path: key,
+          monitorName: el.name
+        }
+      }
+      funcSetValues(el,mon);
+      agg.set(key,mon);
+    }
+  }
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
 app.listen(port);

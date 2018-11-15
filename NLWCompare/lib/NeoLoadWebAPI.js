@@ -3,15 +3,16 @@ const Promise = require('promise');
 const Swagger = require('swagger-client');
 const HashMap = require('hashmap');
 const fs = require('fs');
+const yaml = require('js-yaml');
 
 var url = require('url');
 var http = require('http');
 var HttpProxyAgent = require('http-proxy-agent');
 var HttpsProxyAgent = require('https-proxy-agent');
 
-http.globalAgent.maxSockets = 20;
+http.globalAgent.maxSockets = 5;
 
-var debugHttp = false;
+var debugHttp = true;
 var debugCache = false;
 var reportHttpFinalFailures = true;
 
@@ -22,6 +23,11 @@ module.exports = {
   }
 };
 const httpCachePath = './.cache'
+
+/*process.on('unhandledRejection', error => {
+  // Prints "unhandledRejection woops!"
+  console.log('unhandledRejection', JSON.stringify(error));
+});*/
 
 function NLWAPI(apiKey, host, ssl) {
   this.https = (ssl=="false" ? false : true);
@@ -52,69 +58,152 @@ function NLWAPI(apiKey, host, ssl) {
   if(shouldCache) {
     // resume from file system
     console.log('checking cache');
+    var proms = []
     fs.readdirSync(httpCachePath).forEach(file => {
       if(file.endsWith('.json')) {
         var filepath = httpCachePath + '/' + file;
-        console.log('uncaching: ' + filepath);
-        uncacheHttpResponse(this,filepath);
+        proms.push(uncacheHttpResponse(this,filepath))
       }
     })
-    console.log('done uncaching')
+    var prom = Promise.all(proms)
+    .then(r => {
+      console.log('done uncaching: ' + this.httpResponseCache.count())
+    })
   }
 
+  this.cli = null;
   this.getClient = function() {
-    var nlw = this;
-    try {
-      return retrySwagger("http"+(this.https ? "s" : "")+"://"+this.host+"/explore/swagger.yaml", {
-        userFetch: (url, opts) => {
-          var o = opts ? opts : {};
-          if (this.proxySpec != null)
-            o.agent = new HttpsProxyAgent(this.proxySpec);
-          else if(o.agent == undefined || o.agent == null)
-            o.agent = new http.Agent({ maxSockets: http.globalAgent.maxSockets });
+    if(this.cli == null) {
+      var nlw = this;
+      var specUrl = "http"+(this.https ? "s" : "")+"://"+this.host+"/explore/swagger.yaml";
+      var specPath = httpCachePath+'/_spec.yaml';
+      var opts = getSwaggerOptions(nlw);
+      var specOpts = addHttpAgent({ compres: true})
 
-          /*console.log("--------------------------------------------")
-          console.log("url: " + url + ", opts: " + JSON.stringify(o))
-          console.log("--------------------------------------------")*/
-          if(o.method == "GET") {
-            var key = url;
-            if(nlw.httpResponseCache.has(key))
-              return new Promise(function(resolve,reject) {
-                if(debugHttp || debugCache) console.log('Cached GET: ' + url)
-                resolve(nlw.httpResponseCache.get(key));
-              })
-            else {
-              fetchesOpened += 1;
-              if(debugHttp) console.log('('+fetchesOpened+'/'+fetchesClosed+') Fetching: ' + url)
-              retryFetch(url, o).then(r => {
-                fetchesClosed += 1;
-                if(debugHttp) console.log('('+fetchesOpened+'/'+fetchesClosed+') Fetched: ' + url)
-                if(shouldCache) cacheHttpResponse(nlw, key, r);
-              }).catch(err => {
-                fetchesClosed += 1;
-                if(debugHttp || reportHttpFinalFailures) console.error('('+fetchesOpened+'/'+fetchesClosed+') Error: ' + err)
-              }).finally(r => {
-                if(fetchesOpened != fetchesClosed) {
-                  console.error('Some fetches still outstanding: ('+fetchesOpened+'/'+fetchesClosed+')')
-                }
-              })
-            }
-          }
-          return retryFetch(url, o);
-        },
-        requestInterceptor: (req) => {
-          req.headers['accountToken'] = this.getApiKey();
-          if (this.proxySpec != null)
-            req.agent = new HttpsProxyAgent(this.proxySpec);
-        },
-        responseInterceptor: (res) => {
-          //console.log(res);
+      if(shouldCache) {
+        if(fs.existsSync(specPath)) {
+          console.log('loading yaml from cache')
+          opts.spec = yaml.safeLoad(fs.readFileSync(specPath, 'utf8'))
+          this.cli = inflateSwagger(specUrl,opts);
+        } else {
+          incrementFetches('Caching API spec',specUrl)
+          return retryFetch(specUrl,specOpts)
+          .then(res => res.text())
+          .then(yamlText => {
+            fs.writeFileSync(specPath, yamlText, 'utf8');
+            return yamlText;
+          }).then(yamlText => {
+            opts.spec = yaml.safeLoad(yamlText)
+            this.cli = inflateSwagger(specUrl,opts);
+            return this.cli;
+          })
+          .catch(err => catchFetchError('Failed to obtain API spec',err))
+          .finally(r => decrementFetches('Done fetching API spec'))
         }
-      });
-    } catch(e) {
-      throw e;
+      } else {
+        this.cli = retrySwagger(specUrl, opts);
+      }
     }
+    return this.cli;
   };
+
+  function incrementFetches(context,url) {
+    fetchesOpened += 1;
+    if(debugHttp)
+      console.log('('+fetchesOpened+'/'+fetchesClosed+') ['+context+'] Fetching: ' + url)
+    else
+      process.stdout.write(".");
+  }
+  function catchFetchError(context,err) {
+    if(debugHttp || reportHttpFinalFailures) console.error('('+fetchesOpened+'/'+fetchesClosed+') ['+context+'] Error: ' + err)
+  }
+  function decrementFetches(context) {
+    fetchesClosed += 1;
+  }
+  function monitorHttpQueue() {
+    if(fetchesOpened != fetchesClosed) {
+      console.error('('+fetchesOpened+'/'+fetchesClosed+') Some fetches still outstanding...')
+    }
+    setTimeout(monitorHttpQueue,1000)
+  }
+  monitorHttpQueue();
+
+  function inflateSwagger(specUrl,opts) {
+    opts.url = specUrl;
+    var swagger = Swagger(opts)
+    /*.then(r => {
+      var cli = Promise.resolve(r)
+      console.log(JSON.stringify(cli,null,'\t'));
+      return cli
+    })*/
+    return swagger;
+  }
+
+  function getSwaggerOptions(nlw) {
+    return {
+      userFetch: (url, opts) => {
+        var o = addHttpAgent(opts)
+        return retryFetch(url,o);
+        
+        var prom = new Promise(function(resolve,reject) { reject(new Error('Not implemented')) });
+        /*console.log("--------------------------------------------")
+        console.log("url: " + url + ", opts: " + JSON.stringify(o))
+        console.log("--------------------------------------------")*/
+        if(o.method == "GET") {
+          var key = url;
+          if(nlw.httpResponseCache.has(key)) {
+            prom = new Promise(function(resolve,reject) {
+              if(debugHttp || debugCache) console.log('Cached GET: ' + url)
+              var val = nlw.httpResponseCache.get(key);
+              if(val == undefined || val == null || val.ok == undefined) console.log('trapped '+key)
+              resolve(val);//resolve(val);
+            })
+            //prom = retryFetch(url, o);
+          }
+          else {
+            incrementFetches('Fetching', url)
+            prom = retryFetch(url, o).then(r => {
+              //console.log('blah: '+JSON.stringify(r))
+              if(shouldCache)
+                return cacheHttpResponse(nlw,  key, r);
+              return r;
+            }).catch(err => {
+              catchFetchError('Error', err)
+            }).finally(r => {
+              decrementFetches('Finalizing')
+            })
+          }
+        }
+        console.log('returning promise '+url)
+        return prom
+          .catch(err => {
+            console.log('Caught!!!'+err)
+          })
+          .then(r => {
+            //console.log(JSON.stringify(r))
+          })
+      },
+      requestInterceptor: (req) => {
+        console.log('['+req.url.hashCode()+'] '+req.url)
+        req.headers['accountToken'] = nlw.getApiKey();
+        if (this.proxySpec != null)
+          req.agent = new HttpsProxyAgent(this.proxySpec);
+      },
+      responseInterceptor: (res) => {
+        //console.log(JSON.stringify(res))
+        console.log('['+res.url.hashCode()+'] '+res.url)
+      }
+    }
+  }
+
+  function addHttpAgent(opts) {
+    var o = opts ? opts : {};
+    if (this.proxySpec != null)
+      o.agent = new HttpsProxyAgent(this.proxySpec);
+    else if(o.agent == undefined || o.agent == null)
+      o.agent = new http.Agent({ maxSockets: http.globalAgent.maxSockets });
+    return o;
+  }
 
 const delay = (ms) => {
     return new Promise(resolve => {
@@ -130,7 +219,7 @@ const retryFetch = (url, fetchOptions={}, retries=maxRetries, retryDelay=retryIn
                 .then(res => { resolve(res) })
                 .catch(async err => {
                     if(n > 0) {
-                        // console.log(`retrying ${n}`)
+                        if((retries-n) > 2) console.log('Error in retryFetch['+url+','+(retries-n)+']: '+err)
                         await delay(retryDelay)
                         wrapper(--n)
                     } else {
@@ -146,10 +235,13 @@ const retrySwagger = (yamlUrl, options={}, retries=maxRetries, retryDelay=retryI
     return new Promise((resolve, reject) => {
         const wrapper = n => {
             Swagger(yamlUrl, options)
-                .then(res => { resolve(res) })
+                .then(res => {
+                  resolve(res)
+                 })
                 .catch(async err => {
+                  console.log(err)
                     if(n > 0) {
-                        // console.log(`retrying ${n}`)
+                        console.log(`retrying API spec ${n}`)
                         await delay(retryDelay)
                         wrapper(--n)
                     } else {
@@ -174,25 +266,50 @@ String.prototype.hashCode = function() {
 };
 
 function uncacheHttpResponse(nlw, file) {
-  var o = JSON.parse(fs.readFileSync(file));
-  if(o != undefined && o != null && o.key && o.value) {
-    nlw.httpResponseCache.set(o.key, o.value);
-  } else
-    console.error('Uncaching error: ' + file)
+  return Promise.all([
+      new Promise(function(resolve,reject) {
+        //console.log('Uncaching '+file)
+        resolve(true)
+      }),
+      new Promise(function(resolve,reject) {
+        fs.readFile(file, (err,data) => {
+          if (err) reject(err)
+          var o = JSON.parse(data);
+          if(o != undefined && o != null && o.key && o.value) {
+            nlw.httpResponseCache.set(o.key, o.value);
+            //console.log('[uncached('+nlw.httpResponseCache.count()+')] ' + o.key)
+          } else {
+            reject("Cached file " + file + " invalid format")
+          }
+          resolve(data)
+        })
+      })
+    ])
+    .catch(err => {
+      console.error('Uncaching error: ' + file + ' ::: ' + err)
+    })
 }
 function cacheHttpResponse(nlw, key, oValue) {
-  nlw.httpResponseCache.set(key, oValue);
-  // persist to file system
-  var persisted = {
-    key: key,
-    value: oValue
-  }
-  var json = JSON.stringify(persisted);
-  var path = httpCachePath + '/' + key.hashCode() + '.json';
-  fs.writeFile(path, json, (err) => {
-    // throws an error, you could also catch it here
-    if (err) throw err;
-});
+  return new Promise(function(resolve,reject) {
+    nlw.httpResponseCache.set(key, oValue);
+    // persist to file system
+    var persisted = {
+      key: key,
+      value: oValue
+    }
+    var json = JSON.stringify(persisted);
+    var path = httpCachePath + '/' + key.hashCode() + '.json';
+    return fs.writeFile(path, json, (err) => {
+      // throws an error, you could also catch it here
+      if (err)  {
+        console.log('Error caching Response: ' + err)
+        reject(err)
+      } else {
+        console.log('[cached] ' + persisted.key)
+        resolve(json)
+      }
+    });
+  })
 }
 
   this.createOptions = function(url) {
@@ -267,6 +384,22 @@ function cacheHttpResponse(nlw, key, oValue) {
           return line;
         })
       });
+    });
+  }
+
+  this.monitors = function(testId) {
+    return this.getClient().then(cli => {
+      return cli.apis.Results.GetTestMonitors({testId: testId});
+    });
+  }
+  this.monitorValues = function(testId,counterId) {
+    return this.getClient().then(cli => {
+      return cli.apis.Results.GetTestMonitorsValues({testId: testId, counterId: counterId});
+    });
+  }
+  this.monitorPoints = function(testId,counterId) {
+    return this.getClient().then(cli => {
+      return cli.apis.Results.GetTestMonitorsPoints({testId: testId, counterId: counterId});
     });
   }
 }
