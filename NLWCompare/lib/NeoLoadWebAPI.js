@@ -4,6 +4,9 @@ const Swagger = require('swagger-client');
 const HashMap = require('hashmap');
 const fs = require('fs');
 const yaml = require('js-yaml');
+const Stream = require('stream');
+const readline = require('readline');
+const parsekey = require('parse-key');
 
 var url = require('url');
 var http = require('http');
@@ -11,8 +14,9 @@ var HttpProxyAgent = require('http-proxy-agent');
 var HttpsProxyAgent = require('https-proxy-agent');
 
 http.globalAgent.maxSockets = 5;
+var sleepBetweenRequests = 100;
 
-var debugHttp = true;
+var debugHttp = false;
 var debugCache = false;
 var reportHttpFinalFailures = true;
 
@@ -23,6 +27,26 @@ module.exports = {
   }
 };
 const httpCachePath = './.cache'
+
+var hashOutstandingRequests = new HashMap();
+
+readline.emitKeypressEvents(process.stdin);
+process.stdin.setRawMode(true);
+
+process.stdin.on("keypress", function(str, key) {
+  if(key.sequence === parsekey('ctrl-h').sequence) {
+    debugHttp = !debugHttp
+    console.log('Toggled [debugHttp]: '+(debugHttp ? 'on' : 'off'))
+    console.log(JSON.stringify(hashOutstandingRequests,null,'\t'))
+  }
+  if(key.sequence === parsekey('ctrl-g').sequence) {
+    debugCache = !debugCache
+    console.log('Toggled [debugCache]: '+(debugCache ? 'on' : 'off'))
+  }
+  if(key.sequence === parsekey('ctrl-c').sequence) {
+    process.exit();
+  }
+});
 
 /*process.on('unhandledRejection', error => {
   // Prints "unhandledRejection woops!"
@@ -38,6 +62,24 @@ function NLWAPI(apiKey, host, ssl) {
   this.getApiKey = function() { return this.apiKey; }
   this.setApiKey = function(newApiKey) { this.apiKey = newApiKey; return this; }
 
+  this.getWebBaseUrl = function() {
+    return "http" + (this.https ? "s" : "") + "://" + this.host.split(':')[0];
+  };
+  this.getTestBaseUrl = function(testId) {
+    return this.getWebBaseUrl() + '/#!result/' + testId
+  }
+  this.getOverviewUrl = function(testId) {
+    return this.getTestBaseUrl(testId) + '/overview'
+  }
+  this.getTransactionsUrl = function(testId) {
+    return this.getTestBaseUrl(testId) + '/values/transactions'
+  }
+  this.getRequestsUrl = function(testId) {
+    return this.getTestBaseUrl(testId) + '/values/requests'
+  }
+  this.getCountersUrl = function(testId) {
+    return this.getTestBaseUrl(testId) + '/values/counters'
+  }
   this.getBaseUrl = function() {
     return "http" + (this.https ? "s" : "") + "://" + this.host + "/v1/";
   };
@@ -68,6 +110,7 @@ function NLWAPI(apiKey, host, ssl) {
     var prom = Promise.all(proms)
     .then(r => {
       console.log('done uncaching: ' + this.httpResponseCache.count())
+      //console.log(JSON.stringify(this.httpResponseCache.values()[0]))
     })
   }
 
@@ -98,7 +141,7 @@ function NLWAPI(apiKey, host, ssl) {
             return this.cli;
           })
           .catch(err => catchFetchError('Failed to obtain API spec',err))
-          .finally(r => decrementFetches('Done fetching API spec'))
+          .finally(r => decrementFetches('Done fetching API spec', specUrl))
         }
       } else {
         this.cli = retrySwagger(specUrl, opts);
@@ -109,6 +152,11 @@ function NLWAPI(apiKey, host, ssl) {
 
   function incrementFetches(context,url) {
     fetchesOpened += 1;
+
+    hashOutstandingRequests.set(url,
+      (hashOutstandingRequests.has(url) ? hashOutstandingRequests.get(url) : 0)+1
+    )
+
     if(debugHttp)
       console.log('('+fetchesOpened+'/'+fetchesClosed+') ['+context+'] Fetching: ' + url)
     else
@@ -117,8 +165,16 @@ function NLWAPI(apiKey, host, ssl) {
   function catchFetchError(context,err) {
     if(debugHttp || reportHttpFinalFailures) console.error('('+fetchesOpened+'/'+fetchesClosed+') ['+context+'] Error: ' + err)
   }
-  function decrementFetches(context) {
+  function decrementFetches(context,url) {
     fetchesClosed += 1;
+
+    if(hashOutstandingRequests.has(url)) {
+      var newCount = hashOutstandingRequests.get(url)-1;
+      if(newCount > 0)
+        hashOutstandingRequests.set(url, newCount)
+      else
+        hashOutstandingRequests.remove(url)
+    }
   }
   function monitorHttpQueue() {
     if(fetchesOpened != fetchesClosed) {
@@ -143,8 +199,13 @@ function NLWAPI(apiKey, host, ssl) {
     return {
       userFetch: (url, opts) => {
         var o = addHttpAgent(opts)
-        return retryFetch(url,o);
-        
+        incrementFetches('Fetching', url)
+        return retryFetch(url,o).catch(err => {
+          catchFetchError('Error', err)
+        }).finally(r => {
+          decrementFetches('Finalizing', url)
+        });
+
         var prom = new Promise(function(resolve,reject) { reject(new Error('Not implemented')) });
         /*console.log("--------------------------------------------")
         console.log("url: " + url + ", opts: " + JSON.stringify(o))
@@ -156,21 +217,29 @@ function NLWAPI(apiKey, host, ssl) {
               if(debugHttp || debugCache) console.log('Cached GET: ' + url)
               var val = nlw.httpResponseCache.get(key);
               if(val == undefined || val == null || val.ok == undefined) console.log('trapped '+key)
-              resolve(val);//resolve(val);
+              var resp_opts = {
+        				url: val.url,
+        				status: val.statusCode,
+        				statusText: val.statusText,
+        				headers: val.headers
+        			}
+              var stm = new Stream();
+              for(var k in val.body) stm[k]=val.body[k];
+              var resp = new Response(stm,resp_opts)
+              console.log(resp.json())
+              resolve(resp);//resolve(val);
             })
             //prom = retryFetch(url, o);
           }
           else {
             incrementFetches('Fetching', url)
-            prom = retryFetch(url, o).then(r => {
-              //console.log('blah: '+JSON.stringify(r))
-              if(shouldCache)
-                return cacheHttpResponse(nlw,  key, r);
-              return r;
+            prom = retryFetch(url, o).then(resp  => {
+              //console.log('blah: '+JSON.stringify(resp))
+              return cacheHttpResponse(nlw,  key, resp, shouldCache)
             }).catch(err => {
               catchFetchError('Error', err)
             }).finally(r => {
-              decrementFetches('Finalizing')
+              decrementFetches('Finalizing', url)
             })
           }
         }
@@ -184,14 +253,14 @@ function NLWAPI(apiKey, host, ssl) {
           })
       },
       requestInterceptor: (req) => {
-        console.log('['+req.url.hashCode()+'] '+req.url)
+        //console.log('['+req.url.hashCode()+'] '+req.url)
         req.headers['accountToken'] = nlw.getApiKey();
         if (this.proxySpec != null)
           req.agent = new HttpsProxyAgent(this.proxySpec);
       },
       responseInterceptor: (res) => {
         //console.log(JSON.stringify(res))
-        console.log('['+res.url.hashCode()+'] '+res.url)
+        //console.log('['+res.url.hashCode()+'] '+res.url)
       }
     }
   }
@@ -216,13 +285,16 @@ const retryFetch = (url, fetchOptions={}, retries=maxRetries, retryDelay=retryIn
     return new Promise((resolve, reject) => {
         const wrapper = n => {
             fetch(url, fetchOptions)
-                .then(res => { resolve(res) })
+                .then(res => {
+                  setTimeout(function() { resolve(res)},sleepBetweenRequests)
+                })
                 .catch(async err => {
                     if(n > 0) {
-                        if((retries-n) > 2) console.log('Error in retryFetch['+url+','+(retries-n)+']: '+err)
+                        if(debugHttp) console.log('Error in retryFetch['+url+','+(retries-n)+']: '+err)
                         await delay(retryDelay)
                         wrapper(--n)
                     } else {
+                      if(debugHttp) console.log('Rejecting retryFetch['+url+','+(retries-n)+']: '+err)
                         reject(err)
                     }
                 })
@@ -236,7 +308,7 @@ const retrySwagger = (yamlUrl, options={}, retries=maxRetries, retryDelay=retryI
         const wrapper = n => {
             Swagger(yamlUrl, options)
                 .then(res => {
-                  resolve(res)
+                  setTimeout(function() { resolve(res)},100)
                  })
                 .catch(async err => {
                   console.log(err)
@@ -289,26 +361,31 @@ function uncacheHttpResponse(nlw, file) {
       console.error('Uncaching error: ' + file + ' ::: ' + err)
     })
 }
-function cacheHttpResponse(nlw, key, oValue) {
+function cacheHttpResponse(nlw, key, oValue, persistToFile) {
   return new Promise(function(resolve,reject) {
     nlw.httpResponseCache.set(key, oValue);
-    // persist to file system
-    var persisted = {
-      key: key,
-      value: oValue
-    }
-    var json = JSON.stringify(persisted);
-    var path = httpCachePath + '/' + key.hashCode() + '.json';
-    return fs.writeFile(path, json, (err) => {
-      // throws an error, you could also catch it here
-      if (err)  {
-        console.log('Error caching Response: ' + err)
-        reject(err)
-      } else {
-        console.log('[cached] ' + persisted.key)
-        resolve(json)
+    if(persistToFile) {
+      // persist to file system
+      var persisted = {
+        key: key,
+        value: oValue
       }
-    });
+      var json = JSON.stringify(persisted);
+      if(nlw.filetick == undefined || isNaN(parseInt(nlw.filetick))) nlw.filetick = 0;
+      var fileid = nlw.filetick++ // key.hashCode()
+      var path = httpCachePath + '/' + fileid + '.json';
+      return fs.writeFile(path, json, (err) => {
+        // throws an error, you could also catch it here
+        if (err)  {
+          console.log('Error caching Response: ' + err)
+          reject(err)
+        } else {
+          console.log('[cached] ' + persisted.key)
+          resolve(oValue)
+        }
+      });
+    } else
+      resolve(oValue)
   })
 }
 

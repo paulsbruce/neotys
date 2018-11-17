@@ -63,29 +63,77 @@
     $("#candSummary").html(summaryTemplate.replaceAll('"base','"cand'));
     $("#candTemplateName").html("Candidate")
 
+    $("#timestamp").text((new Date()).toLocaleString())
+
     var data = JSON.parse($("#dump").val())
 
     populateSummary('base',data.baselineSummary)
     populateSummary('cand',data.candidateSummary)
 
+    var nogo = (data.violations != undefined && data.violations != null
+                && Array.isArray(data.violations) && data.violations.length > 0)
+    var totalViolations = (data.violations.length > 0 ?
+      data.violations
+        .map(v => v.monitors)
+        .reduce(function(arr,sub) { return arr.concat(sub) })
+        .map(mon => 1)
+        .reduce(function(sum,num) { return sum+num })
+        : 0);
+    $("#goNoGo").html(
+      (nogo ? '<div class="nogo">NO-GO</div>' : '<div class="go">GO</div>') +
+      (nogo ? '<div class="nogoreasons"><a href="#violations">'+totalViolations+' violation(s)</a></div>' : '')
+      )
+
+    $('#baseName').html('<a href="'+data.links.baseline.overview+'" target="_blank">'+data.baselineSummary.name+'</a>')
+    $('#candName').html('<a href="'+data.links.candidate.overview+'" target="_blank">'+data.candidateSummary.name+'</a>')
+
     // go-no-go
 
-    populatePercentileItems($("#topTransactions"),data.topTransactions,'Transaction')
+    populatePercentileItems({ targetElement: $("#topTransactions"), items: data.topTransactions, itemType: 'Transaction',
+      baseHeader: '<a href="'+data.links.baseline.transactions+'" target="_blank">Baseline<br />(perc)</a>',
+      candHeader: '<a href="'+data.links.candidate.transactions+'" target="_blank">Candidate<br />(perc)</a>'
+    })
 
-    populatePercentileItems($("#topResponses"),data.topRequests,'Request')
+    populatePercentileItems({ targetElement: $("#topResponses"), items: data.topRequests, itemType: 'Request',
+      baseHeader: '<a href="'+data.links.baseline.requests+'" target="_blank">Baseline<br />(perc)</a>',
+      candHeader: '<a href="'+data.links.candidate.requests+'" target="_blank">Candidate<br />(perc)</a>'
+    })
 
-    populatePercentileItems($("#errorRates"),data.errorsByRequest,'Failed Request','path','baselineFailureCount','candidateFailureCount','varianceInFailureCount')
+    populatePercentileItems({ targetElement: $("#errorRates"), items: data.errorsByRequest, itemType: 'Failed Request',
+      baseHeader: 'Baseline<br />(#)',
+      candHeader: 'Candidate<br />(#)',
+      labelKey: 'path',
+      baseKey: 'baselineFailureCount',
+      candKey: 'candidateFailureCount',
+      varianceKey: 'varianceInFailureCount'
+    })
 
-    populatePercentileItems($("#allTransactions"),data.transactionVariances,'Transaction')
+    populatePercentileItems({ targetElement: $("#allTransactions"), items: data.transactionVariances, itemType: 'Transaction',
+      fLabelProcessor: s => truncateText(s,80),
+      baseHeader: '<a href="'+data.links.baseline.transactions+'" target="_blank">Baseline<br />(perc)</a>',
+      candHeader: '<a href="'+data.links.candidate.transactions+'" target="_blank">Candidate<br />(perc)</a>'
+    })
+
+    populateViolationsItems({ targetElement: $("#violations"), items: data.violations,
+      baseHeader: '<a href="'+data.links.baseline.counters+'" target="_blank">Baseline<br />(val)</a>',
+      candHeader: '<a href="'+data.links.candidate.counters+'" target="_blank">Candidate<br />(val)</a>'
+    })
+
+    populatePercentileItems({ targetElement: $("#allRequests"), items: data.requests, itemType: 'Request',
+      fLabelProcessor: s => truncateText(s,80),
+      baseHeader: '<a href="'+data.links.baseline.requests+'" target="_blank">Baseline<br />(perc)</a>',
+      candHeader: '<a href="'+data.links.candidate.requests+'" target="_blank">Candidate<br />(perc)</a>'
+    })
 
   }
+
 
   function populateSummary(uiPrefix,data) {
     $('#'+uiPrefix+'Name').text(data.name)
     $('#'+uiPrefix+'StartDate').text((new Date(data.startDate)).toLocaleString())
     $('#'+uiPrefix+'Duration').text(time_convert(data.duration / 1000 / 60))
     $('#'+uiPrefix+'TPS').text(round(data.transactionsPerSecond,2))
-    $('#'+uiPrefix+'AvgRespTime').text(time_convert(data.averageResponseTime / 60,2))
+    //$('#'+uiPrefix+'AvgRespTime').text(time_convert(data.averageResponseTime / 60,2))
     $('#'+uiPrefix+'Throughput').text(round(data.throughput,3)+'Mbs')
     $('#'+uiPrefix+'ErrorCount').text(data.errorCount)
   }
@@ -97,37 +145,89 @@
     })
     if(fFooterTemplate != undefined && fFooterTemplate != null && typeof fFooterTemplate == 'function') html += fFooterTemplate()
     targetElement.html(html)
+    return html;
   }
-  function populatePercentileItems(targetElement,items,itemType,labelKey,baseKey,candKey,varianceKey) {
-    labelKey = isEmpty(labelKey) ? 'path' : labelKey;
-    baseKey = isEmpty(baseKey) ? 'basePercentile' : baseKey;
-    candKey = isEmpty(candKey) ? 'candPercentile' : candKey;
-    varianceKey = isEmpty(varianceKey) ? 'varianceInPercentile' : varianceKey;
+  function populatePercentileItems(opts) {
+    var labelKey = isEmpty(opts.labelKey) ? 'path' : opts.labelKey;
+    var baseKey = isEmpty(opts.baseKey) ? 'basePercentile' : opts.baseKey;
+    var candKey = isEmpty(opts.candKey) ? 'candPercentile' : opts.candKey;
+    var baseHeader = isEmpty(opts.baseHeader) ? 'Baseline' : opts.baseHeader;
+    var candHeader = isEmpty(opts.candHeader) ? 'Candidate' : opts.candHeader;
+    var varianceKey = isEmpty(opts.varianceKey) ? 'varianceInPercentile' : opts.varianceKey;
 
-    return populateByTemplate(targetElement,items,function(item) {
+    return populateByTemplate(opts.targetElement,opts.items,function(item) {
       var gt = (item[baseKey]<item[candKey]);
       var lt = (item[baseKey]>item[candKey]);
       var eq = (item[baseKey]==item[candKey]);
       var baseClass = eq ? 'non-value' : lt ? 'bad-value' : 'good-value';
       var candClass = eq ? 'non-value' : gt ? 'bad-value' : 'good-value';
       var pathClass = candClass;
+      var rowLabel = (opts.fLabelProcessor != undefined && opts.fLabelProcessor != null && typeof opts.fLabelProcessor == 'function') ?
+        opts.fLabelProcessor(item[labelKey]) : truncateText(item[labelKey])
+
+      var grouping = (typeof opts.fColumnGrouper == 'function') ? opts.fColumnGrouper(item) : null;
       return '<div class="rTableRow">'+
-              '<div class="rTableCell row-label '+pathClass+'">'+truncateText(item[labelKey])+'</div>'+
+              (grouping == null ? '<div class="rTableCell row-label '+pathClass+'">'+rowLabel+'</div>' : '')+
+              (grouping != null ? grouping.itemCells : '') +
               '<div class="rTableCell '+baseClass+' center">'+round(item[baseKey],3)+'</div>'+
               '<div class="rTableCell '+candClass+' center">'+round(item[candKey],3)+'</div>'+
               '<div class="rTableCell '+candClass+'">'+formatPercent(item[varianceKey],2)+'</div>'+
               '</div>'
     },function() {
+      var grouping = (typeof opts.fColumnGrouper == 'function') ? opts.fColumnGrouper(opts.items[0]) : null;
       return '<div class="rTable">'+
               '<div class="rTableHeading">'+
-              '<div class="rTableCell">'+itemType+'</div>'+
-              '<div class="rTableCell center">Baseline</div>'+
-              '<div class="rTableCell center">Candidate</div>'+
+              (grouping == null ? '<div class="rTableCell">'+opts.itemType+'</div>' : '')+
+              (grouping != null ? grouping.headCells : '') +
+              '<div class="rTableCell center">'+baseHeader+'</div>'+
+              '<div class="rTableCell center">'+candHeader+'</div>'+
               '<div class="rTableCell"><em>Var</em></div>'+
               '</div>'
     },function() {
       return '</div>'
     })
+  }
+  //targetElement,items,itemType,fLabelProcessor,labelKey,baseKey,candKey,varianceKey,fColumnGrouper
+  function populateViolationsItems(opts) {
+    var targetElement = opts.targetElement;
+    var violationGroups = opts.items;
+    var html = ''
+    $(violationGroups).each(function(i) {
+      var grp = this;
+      var criticals = grp.monitors.filter(mon => { return mon.violations != undefined && Array.isArray(mon.violations)})
+          .filter(mon => { return mon.violations.filter(viol => viol.critical == true).length > 0})
+      if(criticals.length > 0) {
+        var thisHtml = '<div>'+
+              '<div class="colbox">'+
+                '<h4>'+criticals[0].violations[0].rule+'</h4>'+
+                '<div class="onecol">'+
+                ''+ populatePercentileItems(copyOver(opts,{
+                  targetElement: $('#nonpresentElement'),
+                  items: grp.monitors,
+                  itemType: grp.violationType,
+                  fColumnGrouper: function(itm) {
+                    var template = {
+                      headCells: itm.meta.heirarchy
+                        .map(s => '<div class="rTableCell center">&nbsp;</div>').join('')
+                    }
+                    if(itm != undefined && itm != null)
+                      template.itemCells = itm.meta.heirarchy
+                        .map(s => '<div class="rTableCell center">'+s+'</div>').join('')
+                      console.log(template)
+                    return template;
+                  }
+                })) +
+                '<div style="clear:both;float:none;">&nbsp;</div>'+
+                '</div>'
+              '</div>'+
+              ''
+          html += thisHtml;
+      }
+    })
+    if(html.length < 1)
+      html = 'No violations'
+    targetElement.html(html)
+    return html;
   }
   function truncateText(orig,len) {
     var max = 40;
@@ -172,18 +272,36 @@
     return round(value * 100,scale) + '%'
   }
 
+  function copyOver(oldObj,newObj) {
+    var ret = oldObj;
+    for(var k in newObj) ret[k]=newObj[k];
+    return ret;
+  };
+
   </script>
 </head>
 
-<body style="padding:1em;">
-  <h1>NeoLoad Performance Comparison</h1>
+<body>
+  <div class="colbox">
+    <div class="twocol">
+      <h1>Performance Comparison</h1>
+      <div class="timestamp">
+        Reported on: <span id="timestamp" />
+      </div>
+    </div>
+    <div class="twocol" style="text-align:right;padding-top:1em;">
+      <img src="static/logo-neoload2.png" alt="NeoLoad" width="200" />
+    </div>
+  </div>
+
+  <div style="clear:both;float:none;">&nbsp;</div>
 
   <div class="preloader">
     <img src="static/application-loading.gif" width="128" height="128" alt="loading..." />
   </div>
 
   <div class="colbox">
-    <div class="twocol" id="baseSummary">
+    <div class="threecol" id="baseSummary">
       <div class="rTable">
         <div class="rTableHeading">
           <div class="rTableCell row-label right-align"><h3 id="baseTemplateName">Baseline</h3></div>
@@ -201,10 +319,10 @@
           <div class="rTableCell row-label right-align">Duration</div>
           <div class="rTableCell [[summaryClass]]"><span id="baseDuration"></span></div>
         </div>
-        <div class="rTableRow">
+        <!--div class="rTableRow">
           <div class="rTableCell row-label right-align">Avg Resp Time</div>
           <div class="rTableCell [[summaryClass]]"><span id="baseAvgRespTime"></span></div>
-        </div>
+        </div-->
         <div class="rTableRow">
           <div class="rTableCell row-label right-align">Throughput</div>
           <div class="rTableCell [[summaryClass]]"><span id="baseThroughput"></span></div>
@@ -215,13 +333,15 @@
         </div>
       </div>
     </div>
-    <div class="twocol" id="candSummary">
+    <div class="threecol" id="goNoGo">
+    </div>
+    <div class="threecol" id="candSummary">
     </div>
   </div>
 
   <div style="clear:both;float:none;">&nbsp;</div>
 
-  <h2>Top Issues</h2>
+  <h2>Top Indicators</h2>
 
   <div class="colbox">
     <div class="twocol">
@@ -230,7 +350,7 @@
       </div>
       <div id="topTransactions"></div>
       <div class="row">
-        <h3>Responses (var in avg duration)</h3>
+        <h3>Responses (var in duration)</h3>
       </div>
       <div id="topResponses"></div>
     </div>
@@ -250,6 +370,18 @@
     </div>
   </div>
 
+  <a name="violations" />
+
+  <div style="clear:both;float:none;">&nbsp;</div>
+
+  <h2>Key Server Metrics</h2>
+
+  <div class="colbox">
+    <div class="onecol">
+      <div id="violations"></div>
+    </div>
+  </div>
+
   <div style="clear:both;float:none;">&nbsp;</div>
 
   <h2>All Elements (Details)</h2>
@@ -257,6 +389,14 @@
   <div class="colbox">
     <div class="onecol">
       <div id="allTransactions"></div>
+    </div>
+  </div>
+
+  <div style="clear:both;float:none;">&nbsp;</div>
+
+  <div class="colbox">
+    <div class="onecol">
+      <div id="allRequests"></div>
     </div>
   </div>
 
@@ -278,6 +418,9 @@
 
   body {
     font-family: sans-serif;
+    margin:0em;
+    border:solid 2em #222;
+    padding:4em;
   }
 
   .preloader {
@@ -301,6 +444,11 @@
 
   div.colbox {
     float:none;
+  }
+  div.onecol {
+    width:100%;
+    clear:none;
+    float:left;
   }
   div.twocol {
     width:50%;
@@ -327,12 +475,13 @@
 
   .rTable { display: table; }
   .rTableRow { display: table-row; }
-  .rTableHeading { display: table-header-group; }
+  .rTableHeading { display: table-header-group; font-weight:bold; }
   .rTableBody { display: table-row-group; }
   .rTableFoot { display: table-footer-group; }
-  .rTableCell, .rTableHead { display: table-cell; }
+  .rTableCell, .rTableHead { display: table-cell; border:solid 1px #eee; }
 
   .rTableCell, .rTableHead { padding:0.2em }
+  .rTableHead > .rTableCell { background-color:#ccf }
   .row-label { color:gray; padding-right:1em; }
   .right-align { text-align:right; }
   .center { text-align:center; }
@@ -342,6 +491,12 @@
   .good-value { color:green; }
   .bad-value { color:red; }
 
+  .go, .nogo { font-size:2em; padding-top: 3em; font-weight:bold; text-align:center; }
+  .go { color:green; }
+  .nogo { color:red; }
+  div.nogoreasons { font-style:italic; text-align:center; }
+  a.nogoreasons:link,a.nogoreasons:active,a.nogoreasons:visited,a.nogoreasons:hover { color:gray; }
+  .timestamp { color:gray; display:none; }
   </style>
 </body>
 </html>

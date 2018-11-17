@@ -38,6 +38,7 @@ var nlwapihost = argv.host || process.env.npm_config_host || process.env.NLWAPIH
 var nlwapissl = argv.ssl || process.env.npm_config_ssl || process.env.NLWAPISSL;
 
 var proxy = argv.proxy;
+var debugLogic = false;
 
 if(!nlwapikey) { throw new Error("You must define your NeoLoad Web API key, either as a system environment variable called 'NLWAPIKEY' or as the 'apikey' argument."); }
 
@@ -53,64 +54,106 @@ app.use(function(req, res, next) {
   next();
 });
 
+var hashComparisons = new HashMap()
+
+function Comparison(baseId,candId) {
+  this.baseId = baseId;
+  this.candId = candId;
+  this.body = null;
+  this.getKey = function() { return this.baseId+this.candId; }
+  this.aggregator = new Aggregator()
+}
+function Aggregator() {
+  this.agg_trans = new HashMap();
+  this.agg_requests = new HashMap();
+  this.request_values = new HashMap();
+  this.request_points = new HashMap();
+  this.agg_monitors = new HashMap();
+  this.monitor_values = new HashMap();
+  this.monitor_points = new HashMap();
+}
 
 app.route('/api/comparison')
   .get(function(req, res) {
     var baseId = req.query.baseline;
     var candId = req.query.candidate;
 
-    var body = {
-      baseId: baseId,
-      candId: candId,
-      baselineSummary: {},
-      candidateSummary: {},
-      topTransactions: {},
-      topRequests: {},
-      errorsByRequest: {},
-      violations: [],
-      transactionVariances: {},
-      monitors: {}
-      /*,
-      requests: {}
-      */
-    };
+    var comparison = new Comparison(baseId,candId);
+    if(hashComparisons.has(comparison.getKey())) {
+      comparison = hashComparisons.get(comparison.getKey())
+      res.json(comparison.body);
+    }
+    else {
+      var body = {
+        baseId: baseId,
+        candId: candId,
+        generatedOn: (new Date()).getTime(),
+        links: {
+          baseline: {
+            overview: nlw.getOverviewUrl(baseId),
+            counters: nlw.getCountersUrl(baseId),
+            transactions: nlw.getTransactionsUrl(baseId),
+            requests: nlw.getRequestsUrl(baseId)
+          },
+          candidate: {
+            overview: nlw.getOverviewUrl(candId),
+            counters: nlw.getCountersUrl(candId),
+            transactions: nlw.getTransactionsUrl(candId),
+            requests: nlw.getRequestsUrl(candId)
+          }
+        },
+        baselineSummary: {},
+        candidateSummary: {},
+        topTransactions: {},
+        topRequests: {},
+        errorsByRequest: {},
+        violations: [],
+        transactionVariances: {},
+        monitors: {}
+        /*,
+        requests: {}
+        */
+      };
 
-    Promise.all([
-      promiseTestStatistics(baseId).then(o => {
-        body.baselineSummary = o
-      }),
-      promiseTestStatistics(candId).then(o => {
-        body.candidateSummary = o
-      }),
-      promiseMonitors(baseId,candId).then(o => {
-        body.monitors = o
-      }),
-      promiseViolations(baseId,candId).then(o => {
-        body.violations = o;
-      })/*,
-      promiseErrorsByRequest(baseId,candId).then(o => {
-        body.errorsByRequest = o
-      }),
-      promiseTransactionVariances(baseId,candId).then(o => {
-        body.transactionVariances = o
-      }),
-      promiseTopRequests(baseId,candId).then(o => {
-        body.topRequests = o
-      }),
-      /*,
-      promiseRequestDetails(baseId,candId).then(o => {
-        body.requests = o
+      Promise.all([
+        promiseTestStatistics(comparison.aggregator,baseId).then(o => {
+          body.baselineSummary = o
+        }),
+        promiseTestStatistics(comparison.aggregator,candId).then(o => {
+          body.candidateSummary = o
+        }),
+        promiseMonitors(comparison.aggregator,baseId,candId).then(o => {
+          body.monitors = o
+        }),
+        promiseViolations(comparison.aggregator,baseId,candId).then(o => {
+          body.violations = o;
+        }),
+        promiseErrorsByRequest(comparison.aggregator,baseId,candId).then(o => {
+          body.errorsByRequest = o
+        }),
+        promiseTransactionVariances(comparison.aggregator,baseId,candId).then(o => {
+          body.transactionVariances = o
+        }),
+        promiseTopRequests(comparison.aggregator,baseId,candId).then(o => {
+          body.topRequests = o
+        }),
+        ,
+        promiseRequestDetails(comparison.aggregator,baseId,candId).then(o => {
+          body.requests = o
+        })
+
+      ]).then(r => {
+        // greedy grab all transaction data to calculate percentiles before summarizing
+        return promiseTopTransactions(comparison.aggregator,baseId,candId).then(o => {
+          body.topTransactions = o
+        })
       })
-      */
-    ]).then(r => {
-      // greedy grab all transaction data to calculate percentiles before summarizing
-      return promiseTopTransactions(baseId,candId).then(o => {
-        body.topTransactions = o
+      .then(r => {
+        comparison.body = body;
+        hashComparisons.set(comparison.getKey(),comparison)
+        res.json(body);
       })
-    })
-    .then(r => {
-      res.json(body);
-    })
+    }
   });
 
 
@@ -122,11 +165,11 @@ app.route('/api/comparison')
 
   app.route('/api/shortSummary')
     .get(function(req, res) {
-      promiseTestStatistics(req.query.test).then(o => {
+      promiseTestStatistics(new Aggregator(),req.query.test).then(o => {
         res.json(o)
       });
     });
-  function promiseTestStatistics(testId) {
+  function promiseTestStatistics(aggregator,testId) {
     return nlw.test(testId).then(r => {
       var info = r.body;
       return info;
@@ -147,52 +190,44 @@ app.route('/api/comparison')
   }
 
 
-  var agg_trans = new HashMap();
-  var agg_requests = new HashMap();
-  var request_values = new HashMap();
-  var request_points = new HashMap();
-  var agg_monitors = new HashMap();
-  var monitor_values = new HashMap();
-  var monitor_points = new HashMap();
-
   app.route('/api/topTransactions')
     .get(function(req, res) {
       var baseId = req.query.baseline;
       var candId = req.query.candidate;
-      promiseTopTransactions(baseId,candId).then(o => {
+      promiseTopTransactions(new Aggregator(), baseId,candId).then(o => {
         res.json(o)
       });
     });
-  function promiseTopTransactions(baseId,candId) {
-    return fillTransactions(baseId,candId,agg_trans)
+  function promiseTopTransactions(aggregator,baseId,candId) {
+    return fillTransactions(aggregator,baseId,candId)
     .then(r => {
-      return agg_trans.values().filter(v => { return v != null; })
+      return aggregator.agg_trans.values().filter(v => { return v != null; })
                 .filter(v => { return v != null && v.varianceInPercentile > 0; })
                 .sort(function(a,b) { return b.varianceInPercentile - a.varianceInPercentile})
                 .slice(0,5)
     })
   }
 
-  function promiseTransactionVariances(baseId,candId) {
-    return fillTransactions(baseId,candId,agg_trans)
+  function promiseTransactionVariances(aggregator,baseId,candId) {
+    return fillTransactions(aggregator,baseId,candId)
     .then(r => {
-      return agg_trans.values().filter(v => { return v != null; })
+      return aggregator.agg_trans.values().filter(v => { return v != null; })
                 .sort(function(a,b) { return b.varianceInPercentile - a.varianceInPercentile})
     })
   }
 
-  function fillTransactions(baseId,candId,agg) {
+  function fillTransactions(aggregator,baseId,candId) {
     return Promise.all([
 
       nlw.elements({ id: baseId },'TRANSACTION').then(rs => {
-        stowTransactions(agg,rs,function(el,tran) {
+        stowTransactions(aggregator.agg_trans,rs,function(el,tran) {
           tran.baselineTestId = baseId;
           tran.baselineElementId = el.id;
         })
       }),
 
       nlw.elements({ id: candId },'TRANSACTION').then(rs => {
-        stowTransactions(agg,rs,function(el,tran) {
+        stowTransactions(aggregator.agg_trans,rs,function(el,tran) {
           tran.candidateTestId = candId;
           tran.candidateElementId = el.id;
         })
@@ -244,11 +279,11 @@ app.route('/api/comparison')
 
 
 
-  function promiseTopRequests(baseId,candId) {
-    var prom = getOrFillRequests(baseId,candId);
+  function promiseTopRequests(aggregator,baseId,candId) {
+    var prom = getOrFillRequests(aggregator,baseId,candId);
     return prom
     .then(r => {
-      return agg_requests.values()
+      return aggregator.agg_requests.values()
               .filter(v => { return v != null && v.varianceInPercentile > 0; })
               .sort(function(a,b) {
                 return b.varianceInPercentile - a.varianceInPercentile
@@ -256,14 +291,15 @@ app.route('/api/comparison')
               .slice(0,5)
     })
   }
-  function promiseRequestDetails(baseId,candId) {
-    var prom = getOrFillRequests(baseId,candId);
+  function promiseRequestDetails(aggregator,baseId,candId) {
+    var prom = getOrFillRequests(aggregator,baseId,candId);
     return prom
     .then(r => {
-      return agg_requests.values()
+      return aggregator.agg_requests.values()
               .filter(v => { return v != null; })
-              .sort(b.path)
-              .slice(0,5)
+              .sort(function(a,b) {
+                return b.varianceInPercentile - a.varianceInPercentile || a.path.localeCompare(b.path);
+               })
     })
   }
 
@@ -272,24 +308,24 @@ app.route('/api/comparison')
     .get(function(req, res) {
       var baseId = req.query.baseline;
       var candId = req.query.candidate;
-      promiseErrorsByRequest(baseId,candId).then(o => {
+      promiseErrorsByRequest(new Aggregator(),baseId,candId).then(o => {
         console.log('writing')
         res.json(o)
       });
     });
-  function promiseErrorsByRequest(baseId,candId) {
-    var prom = getOrFillRequests(baseId,candId);
+  function promiseErrorsByRequest(aggregator,baseId,candId) {
+    var prom = getOrFillRequests(aggregator,baseId,candId);
     return prom
     .then(r => {
-      return agg_requests.values()
+      return aggregator.agg_requests.values()
               .filter(v => { return v != null && v.varianceInFailureCount > 0; })
               .sort(function(a,b) { return b.varianceInFailureCount - a.varianceInFailureCount })
               .slice(0,5)
     })
   }
 
-  function getOrFillRequests(baseId,candId) {
-    var agg = agg_requests;
+  function getOrFillRequests(aggregator,baseId,candId) {
+    var agg = aggregator.agg_requests;
     if(agg.count() > 0) {
       console.log('superfluous')
       return Promise.resolve();
@@ -313,42 +349,42 @@ app.route('/api/comparison')
       ]).then(r => {
         //console.log((agg.values().map(e => (e != undefined && e != null ? e.path : ''))).join('\r\n'))
         return Promise.all(
-          agg_requests.values().filter(v => { return v != null; })
+          aggregator.agg_requests.values().filter(v => { return v != null; })
           .map(entry => {
             return Promise.all([
               nlw.values({ test: { id: baseId }, id: entry.baselineElementId }).then(r => {
-                request_values.set(baseId+entry.baselineElementId, r);
+                aggregator.request_values.set(baseId+entry.baselineElementId, r);
                 entry.baselineFailureCount = r.failureCount;
                 entry.baselineAverageDuration = r.avgDuration;
               }),
               nlw.values({ test: { id: candId }, id: entry.candidateElementId }).then(r => {
-                request_values.set(candId+entry.baselineElementId, r);
+                aggregator.request_values.set(candId+entry.baselineElementId, r);
                 entry.candidateFailureCount = r.failureCount;
                 entry.candidateAverageDuration = r.avgDuration;
               }),
               nlw.points({ test: { id: baseId }, id: entry.baselineElementId },0,'AVG_DURATION').then(r => {
-                request_points.set(baseId+entry.baselineElementId, r);
+                aggregator.request_points.set(baseId+entry.baselineElementId, r);
                 //entry.baselineValue = r.avgDuration;
               }),
               nlw.points({ test: { id: candId }, id: entry.candidateElementId },0,'AVG_DURATION').then(r => {
-                request_points.set(candId+entry.candidateElementId, r);
+                aggregator.request_points.set(candId+entry.candidateElementId, r);
                 //entry.candidateValue = r.avgDuration;
               })
             ])
           })
         )
       }).then(r => {
-        agg_requests.values().filter(v => { return v != null; })
+        aggregator.agg_requests.values().filter(v => { return v != null; })
         .map(entry => {
           entry.varianceInFailureCount = (entry.baselineFailureCount != 0 ? (entry.candidateFailureCount / entry.baselineFailureCount) - 1.0 : 0);
           entry.varianceInAverageDuration = (entry.baselineAverageDuration != 0 ? (entry.candidateAverageDuration / entry.baselineAverageDuration) - 1.0 : 0);
         })
       }).then(r => {
-        agg_trans.values().filter(v => { return v != null; })
+        aggregator.agg_trans.values().filter(v => { return v != null; })
         .map(tran => {
           var baseAll = [];
           var candAll = [];
-          var reqs = agg_requests.values().filter(v => { return v != null; })
+          var reqs = aggregator.agg_requests.values().filter(v => { return v != null; })
               .filter(req => (
                   (req.path.indexOf(tran.path) > -1)
                   && (
@@ -359,33 +395,33 @@ app.route('/api/comparison')
                   )
                 )
               ).map(req => {
-                var keys = request_points.keys();
+                var keys = aggregator.request_points.keys();
                 var baseValues = keys.filter(v => { return v != null; })
                       .filter(key => (
                         (key == (req.baselineTestId+req.baselineElementId))
                       ))
-                      .map(key => request_points.get(key))
+                      .map(key => aggregator.request_points.get(key))
                 var candValues = keys.filter(v => { return v != null; })
                       .filter(key => (
                         (key == (req.candidateTestId+req.candidateElementId))
                       ))
-                      .map(key => request_points.get(key))
+                      .map(key => aggregator.request_points.get(key))
                 //req.baseValues = baseValues;
                 if(baseValues.length != 1) console.error('baseValues is not a 1-sized array!!!')
                 if(candValues.length != 1) console.error('candValues is not a 1-sized array!!!')
                 baseAll = baseAll.concat(baseValues[0])
                 candAll = candAll.concat(candValues[0])
                 req.basePercentile = calcPercentile(baseValues[0], o => o.AVG_DURATION)
-                req.candPercentile = calcPercentileByAvgDuration(candValues[0], o => o.AVG_DURATION)
+                req.candPercentile = calcPercentile(candValues[0], o => o.AVG_DURATION)
                 req.varianceInPercentile = (req.basePercentile != 0 ? (req.candPercentile / req.basePercentile) - 1.0 : 0);
                 return req;
               });
           //tran.requests = reqs;
-          tran.basePercentile = calcPercentileByAvgDuration(baseAll, o => o.AVG_DURATION)
-          tran.candPercentile = calcPercentileByAvgDuration(candAll, o => o.AVG_DURATION)
+          tran.basePercentile = calcPercentile(baseAll, o => o.AVG_DURATION)
+          tran.candPercentile = calcPercentile(candAll, o => o.AVG_DURATION)
           tran.varianceInPercentile = (tran.basePercentile != 0 ? (tran.candPercentile / tran.basePercentile) - 1.0 : 0);
           if(baseAll.length < 1)
-            console.error('tran['+tran.path+'] has no values, but '+reqs.length+' requests')
+            if(debugLogic) console.error('tran['+tran.path+'] has no values, but '+reqs.length+' requests')
         })
       })
     }
@@ -468,8 +504,8 @@ app.route('/api/comparison')
     }
   }
 
-  function getOrFillMonitors(baseId,candId) {
-    var agg = agg_monitors;
+  function getOrFillMonitors(aggregator,baseId,candId) {
+    var agg = aggregator.agg_monitors;
     var fInner = function() {
       if(agg.count() > 0) {
         console.log('superfluous')
@@ -485,7 +521,7 @@ app.route('/api/comparison')
                 return Promise.all(
                     rs.map(function(el) {
                       var key = el.path.join('|');
-                      var mon = agg_monitors.get(key);
+                      var mon = agg.get(key);
                       return Promise.all([
                         /*nlw.monitorValues(testId, el.id)
                         .then(p => {
@@ -495,7 +531,7 @@ app.route('/api/comparison')
                         nlw.monitorPoints(testId, el.id)
                         .then(p => {
                           var points = p.body; // array of { AVG: 0 }
-                          monitor_points.set(testId+el.id, points);
+                          aggregator.monitor_points.set(testId+el.id, points);
                         })
                       ])
                     })
@@ -526,11 +562,11 @@ app.route('/api/comparison')
     }
     return fInner()
         .then(p => {
-            return agg_monitors.values()
+            return aggregator.agg_monitors.values()
               .filter(v => { return v != null; })
               .map(mon => {
-                var basePoints = monitor_points.get(mon.baselineTestId+mon.baselineMonitorId)
-                var candPoints = monitor_points.get(mon.candidateTestId+mon.candidateMonitorId)
+                var basePoints = aggregator.monitor_points.get(mon.baselineTestId+mon.baselineMonitorId)
+                var candPoints = aggregator.monitor_points.get(mon.candidateTestId+mon.candidateMonitorId)
                 mon.basePercentile = calcPercentile(basePoints, o => o.AVG)
                 mon.candPercentile = calcPercentile(candPoints, o => o.AVG)
                 mon.varianceInPercentile = (mon.basePercentile != 0 ? (mon.candPercentile / mon.basePercentile) - 1.0 : 0);
@@ -539,28 +575,21 @@ app.route('/api/comparison')
         })
   }
 
-  function promiseMonitors(baseId,candId) {
-    var prom = getOrFillMonitors(baseId,candId);
+  function promiseMonitors(aggregator,baseId,candId) {
+    var prom = getOrFillMonitors(aggregator,baseId,candId);
     return prom.then(r => {
-      applyViolationCalcs()
-      return agg_monitors.values()
+      applyViolationCalcs(aggregator)
+      return aggregator.agg_monitors.values()
               .filter(v => { return v != null; })
               .sort(function(a,b) { return a.path.localeCompare(b.path); })
     })
-    /*.then(r => {
-      return agg_requests.values()
-              .filter(v => { return v != null; })
-              .sort(b.path)
-              .slice(0,5)
-    })*/
   }
 
   function deriveMonitorMeta(mon) {
     var cat = 'Other'
-    var subcat = null;
     var lc = mon.path.toLowerCase();
     var arr = mon.path.split('|')
-    var ext = null;
+    var heir = arr
     if(lc.indexOf('linux') > -1 || lc.indexOf('windows') > -1)
       cat = 'OS'
     else if(lc.indexOf('jvm') > -1)
@@ -568,21 +597,22 @@ app.route('/api/comparison')
     else if(lc.indexOf('weblogic') > -1) {
       cat = 'WebLogic';
       //preecomad01.preprod.yourdomain.com_WebLogic Counters/weblogic/youfapps36/JDBC/DataSource/YOURSVCS/ActiveConnectionsHighCount
-      ext = {
-        host: arr[0].split('_')[0],
-        node: arr[2],
-        type: arr[3],
-        target: arr[4]+'/'+arr[5]
-      }
-      subcat = ext.type
     }
+
+    var first = arr[0].split('_');
+    heir = [
+      first[0], //Host
+    ]
+    if(first.length > 1)
+      heir = first;
+    heir = heir.concat(arr.slice(heir.length,arr.length))
+
     var label = arr[arr.length-1]
     var ret = {
       category: cat,
-      subcategory: subcat,
-      label: label
+      label: label,
+      heirarchy: heir
     };
-    if(ext != null) ret.ext = ext;
     return ret;
   }
 
@@ -591,17 +621,17 @@ app.route('/api/comparison')
       {
         name: 'OS Counters >10% variance',
         isCritical: function(mon) { return osCriticals().includes(mon.meta.label) },
-        isInViolation: function(mon) { return mon.meta.category == 'OS' && Math.abs(mon.varianceInPercentile) > 0.10 }
+        isInViolation: function(mon) { return mon.meta.category == 'OS' && mon.varianceInPercentile > 0.10 }
       },
       {
         name: 'WebLogic Counters >10% variance',
         isCritical: function(mon) { return wlCriticals().includes(mon.meta.label) },
-        isInViolation: function(mon) { return mon.meta.category == 'WebLogic' && Math.abs(mon.varianceInPercentile) > 0.10 }
+        isInViolation: function(mon) { return mon.meta.category == 'WebLogic' && mon.varianceInPercentile > 0.10 }
       },
       {
         name: 'JMX Counters >10% variance',
         isCritical: function(mon) { return jmxCriticals().includes(mon.meta.label) },
-        isInViolation: function(mon) { return mon.meta.category == 'JMX' && Math.abs(mon.varianceInPercentile) > 0.05 }
+        isInViolation: function(mon) { return mon.meta.category == 'JMX' && mon.varianceInPercentile > 0.05 }
       }
     ]
   }
@@ -632,9 +662,9 @@ app.route('/api/comparison')
   ]}
   function jmxCriticals() { return ['HeapFreeCurrent'] }
 
-  function applyViolationCalcs() {
+  function applyViolationCalcs(aggregator) {
     getMonitorViolationRules().map(rule => {
-      agg_monitors.values()
+      aggregator.agg_monitors.values()
           .filter(v => { return v != null; })
           .filter(v => { return rule.isInViolation(v); })
           .forEach(mon => {
@@ -646,20 +676,19 @@ app.route('/api/comparison')
           })
     })
   }
-  function promiseViolations(baseId,candId) {
-    var prom = getOrFillMonitors(baseId,candId);
+  function promiseViolations(aggregator,baseId,candId) {
+    var prom = getOrFillMonitors(aggregator,baseId,candId);
     var doc = []
     return prom
     .then(r => {
-      console.log('applying calcs')
-      applyViolationCalcs()
-      agg_monitors.values().filter(v => { return v != null; })
+      applyViolationCalcs(aggregator)
+      aggregator.agg_monitors.values().filter(v => { return v != null; })
           .filter(mon => { return mon.violations && Array.isArray(mon.violations) })
           .sort(function(a,b) {
             var compareCat = (a.meta.category+"").localeCompare(b.meta.category)
-            var compareSubcat = (a.meta.subcategory+"").localeCompare(b.meta.subcategory)
+            var compareHeirarchy = compareArrays(a.meta.heirarchy,b.meta.heirarchy,function(a,b) { return a.localeCompare(b) })
             var compareLabel = (a.meta.label+"").localeCompare(b.meta.label)
-            return compareCat || compareSubcat || compareLabel
+            return compareCat || compareLabel || compareHeirarchy
           })
           .forEach(mon => {
             var typeNode = doc.filter(d => d.violationType == mon.meta.category);
@@ -675,6 +704,25 @@ app.route('/api/comparison')
           })
       return doc;
     })
+  }
+
+  function compareArrays(arr1, arr2, fCompareItems) {
+    var oneValid = (arr1 != undefined && arr1 != null && Array.isArray(arr1));
+    var twoValid = (arr2 != undefined && arr2 != null && Array.isArray(arr2));
+    if(oneValid && !twoValid) return -1;
+    if(!oneValid && twoValid) return 1;
+    if(oneValid && twoValid)
+      for(var i=0; i<Math.max(arr1.length,arr2.length); i++) {
+        var one = i<(arr1.length-1) ? arr1[i] : undefined;
+        var two = i<(arr2.length-1) ? arr2[i] : undefined;
+        if(typeof one == undefined) return 1
+        if(typeof two == undefined) return -1
+        if(one == null && two != null) return 1
+        if(one != null && two == null) return -1
+        var res = fCompareItems(one,two)
+        if(res != 0) return res;
+      }
+    return 0;
   }
 
   function stowMonitors(agg,rs,funcSetValues) {
