@@ -1,3 +1,4 @@
+const Logger = require('./lib/shared.js'), logger = Logger.create()
 const NLWAPI = require('./lib/NeoLoadWebAPI.js')
 const argv = require("yargs").argv;
 const express = require('express'),
@@ -28,7 +29,7 @@ app.use('/static', express.static(__dirname + '/static'));
 const json2csv = require('json2csv');
 const HashMap = require('hashmap');
 
-console.log('NeoLoad flattener RESTful API server started on: ' + port);
+console_log('NeoLoad flattener RESTful API server started on: ' + port);
 
 //app.use(bodyParser.urlencoded({ extended: true }));
 //app.use(bodyParser.json());
@@ -45,7 +46,7 @@ if(!nlwapikey) { throw new Error("You must define your NeoLoad Web API key, eith
 var nlw = NLWAPI.create(nlwapikey, nlwapihost, nlwapissl);
 if(proxy) nlw.proxy(proxy);
 
-console.log('Waiting for client connections...')
+console_log('Waiting for client connections...')
 
 app.use(function(req, res, next) {
   res.header("Access-Control-Allow-Origin", "*");
@@ -171,6 +172,7 @@ app.route('/api/comparison')
     });
   function promiseTestStatistics(aggregator,testId) {
     return nlw.test(testId).then(r => {
+
       var info = r.body;
       return info;
     }).then(info => {
@@ -236,7 +238,7 @@ app.route('/api/comparison')
     ])/*.then(r => {
       return getOrFillRequests(baseId,candId)
         .then(r => {
-          console.log('here is where we fill transaction percentiles')
+          console_log('here is where we fill transaction percentiles')
         })
     })*/
     /*.then(r => {
@@ -309,7 +311,7 @@ app.route('/api/comparison')
       var baseId = req.query.baseline;
       var candId = req.query.candidate;
       promiseErrorsByRequest(new Aggregator(),baseId,candId).then(o => {
-        console.log('writing')
+        console_log('writing')
         res.json(o)
       });
     });
@@ -327,7 +329,7 @@ app.route('/api/comparison')
   function getOrFillRequests(aggregator,baseId,candId) {
     var agg = aggregator.agg_requests;
     if(agg.count() > 0) {
-      console.log('superfluous')
+      console_log('superfluous')
       return Promise.resolve();
     } else {
       return Promise.all([
@@ -347,7 +349,7 @@ app.route('/api/comparison')
         })
 
       ]).then(r => {
-        //console.log((agg.values().map(e => (e != undefined && e != null ? e.path : ''))).join('\r\n'))
+        //console_log((agg.values().map(e => (e != undefined && e != null ? e.path : ''))).join('\r\n'))
         return Promise.all(
           aggregator.agg_requests.values().filter(v => { return v != null; })
           .map(entry => {
@@ -430,7 +432,7 @@ app.route('/api/comparison')
 
   function calcPercentile(arr,fMap) {
     if(arr == undefined || arr == null || !Array.isArray(arr)) {
-      console.log('bad array passed to calcPercentile: ' + JSON.stringify(arr))
+      console_log('bad array passed to calcPercentile: ' + JSON.stringify(arr))
       return 0;
     }
     else {
@@ -508,7 +510,7 @@ app.route('/api/comparison')
     var agg = aggregator.agg_monitors;
     var fInner = function() {
       if(agg.count() > 0) {
-        console.log('superfluous')
+        console_log('superfluous')
         return Promise.resolve();
       } else {
         var fFill = function(testId,fStow,fStashVal) {
@@ -747,10 +749,9 @@ app.route('/api/comparison')
 
 
 
-
-
-
-
+  function console_log(opts) {
+    logger.log(opts)
+  }
 
 
 

@@ -1,3 +1,4 @@
+const Logger = require('./shared.js'), logger = Logger.create()
 const Promise = require('promise');
 //const fetch = require('cross-fetch');
 const Swagger = require('swagger-client');
@@ -13,8 +14,14 @@ var http = require('http');
 var HttpProxyAgent = require('http-proxy-agent');
 var HttpsProxyAgent = require('https-proxy-agent');
 
-http.globalAgent.maxSockets = 5;
-var sleepBetweenRequests = 100;
+http.globalAgent.maxSockets = 20;
+var sleepBetweenRequests = 20;
+var sleepBetweenRpsResampling = 100;
+var arrHttpThroughput = []
+var maxConcurrentRequests = (http.globalAgent.maxSockets / 10);
+var currentRequestCount = 0;
+var lastRps = 0;
+var maxRps = maxConcurrentRequests;
 
 var debugHttp = false;
 var debugCache = false;
@@ -36,12 +43,27 @@ process.stdin.setRawMode(true);
 process.stdin.on("keypress", function(str, key) {
   if(key.sequence === parsekey('ctrl-h').sequence) {
     debugHttp = !debugHttp
-    console.log('Toggled [debugHttp]: '+(debugHttp ? 'on' : 'off'))
-    console.log(JSON.stringify(hashOutstandingRequests,null,'\t'))
+    console_log('Toggled [debugHttp]: '+(debugHttp ? 'on' : 'off'))
+    console_log(JSON.stringify({
+      sleepBetweenRequests: sleepBetweenRequests,
+      sleepBetweenRpsResampling: sleepBetweenRpsResampling,
+      maxConcurrentRequests: maxConcurrentRequests,
+      currentRequestCount: currentRequestCount,
+      lastRps: lastRps,
+      maxRps: maxRps
+    }, null, '\t'))
+    console_log(JSON.stringify(arrHttpThroughput,null,'\t'))
+    console_log(JSON.stringify(
+      {
+        collection: 'hashOutstandingRequests',
+        size: hashOutstandingRequests.size,
+        top: hashOutstandingRequests.keys().slice(0,5)
+      }
+    ,null,'\t'))
   }
   if(key.sequence === parsekey('ctrl-g').sequence) {
     debugCache = !debugCache
-    console.log('Toggled [debugCache]: '+(debugCache ? 'on' : 'off'))
+    console_log('Toggled [debugCache]: '+(debugCache ? 'on' : 'off'))
   }
   if(key.sequence === parsekey('ctrl-c').sequence) {
     process.exit();
@@ -50,7 +72,7 @@ process.stdin.on("keypress", function(str, key) {
 
 /*process.on('unhandledRejection', error => {
   // Prints "unhandledRejection woops!"
-  console.log('unhandledRejection', JSON.stringify(error));
+  console_log('unhandledRejection', JSON.stringify(error));
 });*/
 
 function NLWAPI(apiKey, host, ssl) {
@@ -99,7 +121,7 @@ function NLWAPI(apiKey, host, ssl) {
 
   if(shouldCache) {
     // resume from file system
-    console.log('checking cache');
+    console_log('checking cache');
     var proms = []
     fs.readdirSync(httpCachePath).forEach(file => {
       if(file.endsWith('.json')) {
@@ -109,8 +131,8 @@ function NLWAPI(apiKey, host, ssl) {
     })
     var prom = Promise.all(proms)
     .then(r => {
-      console.log('done uncaching: ' + this.httpResponseCache.count())
-      //console.log(JSON.stringify(this.httpResponseCache.values()[0]))
+      console_log('done uncaching: ' + this.httpResponseCache.count())
+      //console_log(JSON.stringify(this.httpResponseCache.values()[0]))
     })
   }
 
@@ -125,7 +147,7 @@ function NLWAPI(apiKey, host, ssl) {
 
       if(shouldCache) {
         if(fs.existsSync(specPath)) {
-          console.log('loading yaml from cache')
+          console_log('loading yaml from cache')
           opts.spec = yaml.safeLoad(fs.readFileSync(specPath, 'utf8'))
           this.cli = inflateSwagger(specUrl,opts);
         } else {
@@ -158,9 +180,11 @@ function NLWAPI(apiKey, host, ssl) {
     )
 
     if(debugHttp)
-      console.log('('+fetchesOpened+'/'+fetchesClosed+') ['+context+'] Fetching: ' + url)
+      console_log('('+fetchesOpened+'/'+fetchesClosed+') ['+context+'] Fetching: ' + url)
     else
-      process.stdout.write(".");
+      console_log({text: ".", after: ''});
+
+    afterChangeFetchCount()
   }
   function catchFetchError(context,err) {
     if(debugHttp || reportHttpFinalFailures) console.error('('+fetchesOpened+'/'+fetchesClosed+') ['+context+'] Error: ' + err)
@@ -175,21 +199,73 @@ function NLWAPI(apiKey, host, ssl) {
       else
         hashOutstandingRequests.remove(url)
     }
+
+    afterChangeFetchCount()
   }
+
+  function afterChangeFetchCount() {
+    var none = (fetchesOpened - fetchesClosed) == 0;
+    if(none)
+      console_log('Done fetching')
+  }
+
   function monitorHttpQueue() {
+    var rate = manageHttpThroughput()
     if(fetchesOpened != fetchesClosed) {
-      console.error('('+fetchesOpened+'/'+fetchesClosed+') Some fetches still outstanding...')
+      console_log('('+fetchesOpened+'/'+fetchesClosed+' :: '+Math.round(rate,2)+'/'+maxConcurrentRequests+'rps) Some fetches still outstanding...')
     }
     setTimeout(monitorHttpQueue,1000)
   }
   monitorHttpQueue();
+
+  function monitorHttpThroughput() {
+    lastRps = manageHttpThroughput();
+    recalcHttpThroughputControls();
+    setTimeout(monitorHttpThroughput,sleepBetweenRpsResampling)
+  }
+  monitorHttpThroughput();
+
+  var timeProcessStarted = (new Date()).getTime();
+  function getTimeSinceProcessStarted() { return (new Date()).getTime() - timeProcessStarted; }
+  function manageHttpThroughput() {
+    var lastClosed = (arrHttpThroughput.length > 0 ? arrHttpThroughput[arrHttpThroughput.length-1].closed : 0)
+
+    var entry = {
+      time: getTimeSinceProcessStarted(),
+      closed: fetchesClosed,
+      closedDelta: fetchesClosed - lastClosed
+    }
+
+    var rateNow = [{time: 0, closed: 0, closedDelta: 0}]
+      .concat(arrHttpThroughput)
+      .map(o => o.closedDelta)
+      .reduce((total, amount, index, array) => {
+        total += amount;
+        if( index === array.length-1)
+          return total/array.length;
+        return total;
+      });
+    entry.rate = rateNow;
+    arrHttpThroughput.push(entry);
+
+    if(arrHttpThroughput.length >= 3)
+      arrHttpThroughput.shift()
+
+    return rateNow;
+  }
+  function recalcHttpThroughputControls() {
+    if(lastRps >= maxRps && maxConcurrentRequests > 1)
+      maxConcurrentRequests--
+    else if(maxConcurrentRequests < http.globalAgent.maxSockets)
+      maxConcurrentRequests++
+  }
 
   function inflateSwagger(specUrl,opts) {
     opts.url = specUrl;
     var swagger = Swagger(opts)
     /*.then(r => {
       var cli = Promise.resolve(r)
-      console.log(JSON.stringify(cli,null,'\t'));
+      console_log(JSON.stringify(cli,null,'\t'));
       return cli
     })*/
     return swagger;
@@ -199,42 +275,33 @@ function NLWAPI(apiKey, host, ssl) {
     return {
       userFetch: (url, opts) => {
         var o = addHttpAgent(opts)
+        /*
         incrementFetches('Fetching', url)
         return retryFetch(url,o).catch(err => {
           catchFetchError('Error', err)
         }).finally(r => {
           decrementFetches('Finalizing', url)
         });
+        */
 
         var prom = new Promise(function(resolve,reject) { reject(new Error('Not implemented')) });
-        /*console.log("--------------------------------------------")
-        console.log("url: " + url + ", opts: " + JSON.stringify(o))
-        console.log("--------------------------------------------")*/
+        /*console_log("--------------------------------------------")
+        console_log("url: " + url + ", opts: " + JSON.stringify(o))
+        console_log("--------------------------------------------")*/
         if(o.method == "GET") {
           var key = url;
-          if(nlw.httpResponseCache.has(key)) {
+          if(false && nlw.httpResponseCache.has(key)) {
             prom = new Promise(function(resolve,reject) {
-              if(debugHttp || debugCache) console.log('Cached GET: ' + url)
+              if(debugHttp || debugCache) console_log('Cached GET: ' + url)
               var val = nlw.httpResponseCache.get(key);
-              if(val == undefined || val == null || val.ok == undefined) console.log('trapped '+key)
-              var resp_opts = {
-        				url: val.url,
-        				status: val.statusCode,
-        				statusText: val.statusText,
-        				headers: val.headers
-        			}
-              var stm = new Stream();
-              for(var k in val.body) stm[k]=val.body[k];
-              var resp = new Response(stm,resp_opts)
-              console.log(resp.json())
-              resolve(resp);//resolve(val);
+              resolve(val)
             })
             //prom = retryFetch(url, o);
           }
           else {
             incrementFetches('Fetching', url)
             prom = retryFetch(url, o).then(resp  => {
-              //console.log('blah: '+JSON.stringify(resp))
+              //console_log('blah: '+JSON.stringify(resp))
               return cacheHttpResponse(nlw,  key, resp, shouldCache)
             }).catch(err => {
               catchFetchError('Error', err)
@@ -243,24 +310,17 @@ function NLWAPI(apiKey, host, ssl) {
             })
           }
         }
-        console.log('returning promise '+url)
         return prom
-          .catch(err => {
-            console.log('Caught!!!'+err)
-          })
-          .then(r => {
-            //console.log(JSON.stringify(r))
-          })
       },
       requestInterceptor: (req) => {
-        //console.log('['+req.url.hashCode()+'] '+req.url)
+        //console_log('['+req.url.hashCode()+'] '+req.url)
         req.headers['accountToken'] = nlw.getApiKey();
         if (this.proxySpec != null)
           req.agent = new HttpsProxyAgent(this.proxySpec);
       },
       responseInterceptor: (res) => {
-        //console.log(JSON.stringify(res))
-        //console.log('['+res.url.hashCode()+'] '+res.url)
+        //console_log(JSON.stringify(res))
+        //console_log('['+res.url.hashCode()+'] '+res.url)
       }
     }
   }
@@ -274,120 +334,142 @@ function NLWAPI(apiKey, host, ssl) {
     return o;
   }
 
-const delay = (ms) => {
-    return new Promise(resolve => {
-        setTimeout(() => {
-            resolve()
-        }, ms)
-    })
-}
-const retryFetch = (url, fetchOptions={}, retries=maxRetries, retryDelay=retryInMs) => {
-    return new Promise((resolve, reject) => {
-        const wrapper = n => {
-            fetch(url, fetchOptions)
-                .then(res => {
-                  setTimeout(function() { resolve(res)},sleepBetweenRequests)
-                })
-                .catch(async err => {
-                    if(n > 0) {
-                        if(debugHttp) console.log('Error in retryFetch['+url+','+(retries-n)+']: '+err)
-                        await delay(retryDelay)
-                        wrapper(--n)
-                    } else {
-                      if(debugHttp) console.log('Rejecting retryFetch['+url+','+(retries-n)+']: '+err)
-                        reject(err)
-                    }
-                })
-        }
-
-        wrapper(retries)
-    })
-}
-const retrySwagger = (yamlUrl, options={}, retries=maxRetries, retryDelay=retryInMs) => {
-    return new Promise((resolve, reject) => {
-        const wrapper = n => {
-            Swagger(yamlUrl, options)
-                .then(res => {
-                  setTimeout(function() { resolve(res)},100)
-                 })
-                .catch(async err => {
-                  console.log(err)
-                    if(n > 0) {
-                        console.log(`retrying API spec ${n}`)
-                        await delay(retryDelay)
-                        wrapper(--n)
-                    } else {
-                        reject(err)
-                    }
-                })
-        }
-
-        wrapper(retries)
-    })
-}
-
-String.prototype.hashCode = function() {
-  var hash = 0, i, chr;
-  if (this.length === 0) return hash;
-  for (i = 0; i < this.length; i++) {
-    chr   = this.charCodeAt(i);
-    hash  = ((hash << 5) - hash) + chr;
-    hash |= 0; // Convert to 32bit integer
-  }
-  return hash;
-};
-
-function uncacheHttpResponse(nlw, file) {
-  return Promise.all([
-      new Promise(function(resolve,reject) {
-        //console.log('Uncaching '+file)
-        resolve(true)
-      }),
-      new Promise(function(resolve,reject) {
-        fs.readFile(file, (err,data) => {
-          if (err) reject(err)
-          var o = JSON.parse(data);
-          if(o != undefined && o != null && o.key && o.value) {
-            nlw.httpResponseCache.set(o.key, o.value);
-            //console.log('[uncached('+nlw.httpResponseCache.count()+')] ' + o.key)
-          } else {
-            reject("Cached file " + file + " invalid format")
-          }
-          resolve(data)
-        })
+  const delay = (ms) => {
+      return new Promise(resolve => {
+          setTimeout(() => {
+              resolve()
+          }, ms)
       })
-    ])
-    .catch(err => {
-      console.error('Uncaching error: ' + file + ' ::: ' + err)
-    })
-}
-function cacheHttpResponse(nlw, key, oValue, persistToFile) {
-  return new Promise(function(resolve,reject) {
-    nlw.httpResponseCache.set(key, oValue);
-    if(persistToFile) {
-      // persist to file system
-      var persisted = {
-        key: key,
-        value: oValue
-      }
-      var json = JSON.stringify(persisted);
-      if(nlw.filetick == undefined || isNaN(parseInt(nlw.filetick))) nlw.filetick = 0;
-      var fileid = nlw.filetick++ // key.hashCode()
-      var path = httpCachePath + '/' + fileid + '.json';
-      return fs.writeFile(path, json, (err) => {
-        // throws an error, you could also catch it here
-        if (err)  {
-          console.log('Error caching Response: ' + err)
-          reject(err)
-        } else {
-          console.log('[cached] ' + persisted.key)
-          resolve(oValue)
+  }
+
+  const retryFetch = (url, fetchOptions={}, retries=maxRetries, retryDelay=retryInMs) => {
+      return new Promise((resolve, reject) => {
+        var fProcess = function() {} // proper pre-ref
+        fProcess = function() {
+          recalcHttpThroughputControls() // instant recalc
+          if(
+            //(currentRequestCount < maxConcurrentRequests)
+            //&&
+            (lastRps < maxRps)
+          ) {
+            currentRequestCount++;
+
+            const wrapper = n => {
+              fetch(url, fetchOptions)
+                  .then(res => {
+                    setTimeout(function() { currentRequestCount--; resolve(res)}, sleepBetweenRequests)
+                  })
+                  .catch(async err => {
+                      if(n > 0) {
+                          if(debugHttp) console_log('Error in retryFetch['+url+','+(retries-n)+']: '+err)
+                          await delay(retryDelay)
+                          wrapper(--n)
+                      } else {
+                        if(debugHttp) console_log('Rejecting retryFetch['+url+','+(retries-n)+']: '+err)
+                        currentRequestCount--;
+                        reject(err)
+                      }
+                  })
+                }
+
+            wrapper(retries)
+          } else {
+            if(debugHttp) console_log('waiting')
+            setTimeout(fProcess,sleepBetweenRequests);
+          }
         }
-      });
-    } else
-      resolve(oValue)
-  })
-}
+        fProcess();
+      })
+  }
+  const retrySwagger = (yamlUrl, options={}, retries=maxRetries, retryDelay=retryInMs) => {
+      return new Promise((resolve, reject) => {
+          const wrapper = n => {
+              Swagger(yamlUrl, options)
+                  .then(res => {
+                    setTimeout(function() { resolve(res)},100)
+                   })
+                  .catch(async err => {
+                    console_log(err)
+                      if(n > 0) {
+                          console_log(`retrying API spec ${n}`)
+                          await delay(retryDelay)
+                          wrapper(--n)
+                      } else {
+                          reject(err)
+                      }
+                  })
+          }
+
+          wrapper(retries)
+      })
+  }
+
+  String.prototype.hashCode = function() {
+    var hash = 0, i, chr;
+    if (this.length === 0) return hash;
+    for (i = 0; i < this.length; i++) {
+      chr   = this.charCodeAt(i);
+      hash  = ((hash << 5) - hash) + chr;
+      hash |= 0; // Convert to 32bit integer
+    }
+    return hash;
+  };
+
+  function uncacheHttpResponse(nlw, file) {
+    return Promise.all([
+        new Promise(function(resolve,reject) {
+          //console_log('Uncaching '+file)
+          resolve(true)
+        }),
+        new Promise(function(resolve,reject) {
+          fs.readFile(file, (err,data) => {
+            if (err) reject(err)
+            try {
+              var o = JSON.parse(data);
+              if(o != undefined && o != null && o.key && o.value) {
+                nlw.httpResponseCache.set(o.key, o.value);
+                //console_log('[uncached('+nlw.httpResponseCache.count()+')] ' + o.key)
+              } else {
+                reject("Cached file " + file + " invalid format")
+              }
+              resolve(data)
+            } catch(e) {
+              reject(e)
+            }
+          })
+        })
+      ])
+      .catch(err => {
+        console.error('Uncaching error: ' + file + ' ::: ' + err)
+      })
+  }
+  function cacheHttpResponse(nlw, key, oValue, persistToFile) {
+    return new Promise(function(resolve,reject) {
+      nlw.httpResponseCache.set(key, oValue);
+      if(persistToFile) {
+        // persist to file system
+        var persisted = {
+          key: key,
+          value: oValue
+        }
+        var json = JSON.stringify(persisted);
+        if(nlw.filetick == undefined || isNaN(parseInt(nlw.filetick))) nlw.filetick = 0;
+        var fileid = nlw.filetick++ // key.hashCode()
+        var path = httpCachePath + '/' + fileid + '.json';
+        return fs.writeFile(path, json, (err) => {
+          // throws an error, you could also catch it here
+          if (err)  {
+            if(debugCache) console_log('Error caching Response: ' + err)
+            reject(err)
+          } else {
+            if(debugCache) console_log('[cached] ' + persisted.key)
+            resolve(oValue)
+          }
+        });
+      } else
+        resolve(oValue)
+    })
+  }
 
   this.createOptions = function(url) {
     return {
@@ -397,22 +479,32 @@ function cacheHttpResponse(nlw, key, oValue, persistToFile) {
     };
   }
 
+  function handleError(err,context) {
+    console.error('\n\n[Error]'+JSON.stringify(context)+'\n\n'+JSON.stringify(err)+'\n\n');
+  }
+
   this.test = function(id) {
     return this.getClient().then(cli => {
       return cli.apis.Results.GetTest({testId: id});
+    }).catch(err => {
+      handleError(err,{id:id})
     });
   }
 
   this.testStatistics = function(id) {
     return this.getClient().then(cli => {
       return cli.apis.Results.GetTestStatistics({testId: id});
-    });
+    }).catch(err => {
+      handleError(err,{id:id})
+    });;
   }
 
   this.tests = function() {
     return this.getClient().then(cli => {
       return cli.apis.Results.GetTests({limit: 50, pretty: true});
-    });
+    }).catch(err => {
+      handleError(err,{})
+    });;
   }
 
   this.elements = function(test,category) {
@@ -423,12 +515,16 @@ function cacheHttpResponse(nlw, key, oValue, persistToFile) {
         el.test = test;
         return el;
       });
+    }).catch(err => {
+      handleError(err,{test:test,category:category})
     });
   }
 
   this.values = function(element) {
     return this.getClient().then(cli => {
       return cli.apis.Results.GetTestElementsValues({ testId: element.test.id, elementId: element.id });
+    }).catch(err => {
+      handleError(err,{element:element})
     }).then(res => {
       return res.body;
     });
@@ -445,6 +541,8 @@ function cacheHttpResponse(nlw, key, oValue, persistToFile) {
         testId: element.test.id,
         elementId: element.id,
         statistics: fields
+      }).catch(err => {
+        handleError(err,{element:element, since:since, fields:fields})
       }).then(set => {
         return set.body
           .filter(line => {
@@ -467,16 +565,26 @@ function cacheHttpResponse(nlw, key, oValue, persistToFile) {
   this.monitors = function(testId) {
     return this.getClient().then(cli => {
       return cli.apis.Results.GetTestMonitors({testId: testId});
+    }).catch(err => {
+      handleError(err,{testId:testId})
     });
   }
   this.monitorValues = function(testId,counterId) {
     return this.getClient().then(cli => {
       return cli.apis.Results.GetTestMonitorsValues({testId: testId, counterId: counterId});
+    }).catch(err => {
+      handleError(err,{testId:testId,counterId:counterId})
     });
   }
   this.monitorPoints = function(testId,counterId) {
     return this.getClient().then(cli => {
       return cli.apis.Results.GetTestMonitorsPoints({testId: testId, counterId: counterId});
+    }).catch(err => {
+      handleError(err,{testId:testId,counterId:counterId})
     });
   }
+}
+
+function console_log(opts) {
+  logger.log(opts)
 }
