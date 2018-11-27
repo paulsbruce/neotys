@@ -10,7 +10,7 @@ const readline = require('readline');
 const parsekey = require('parse-key');
 
 var url = require('url');
-var http = require('http');
+var http = require('https');
 var HttpProxyAgent = require('http-proxy-agent');
 var HttpsProxyAgent = require('https-proxy-agent');
 
@@ -77,6 +77,12 @@ process.stdin.on("keypress", function(str, key) {
 
 function NLWAPI(apiKey, host, ssl) {
   this.https = (ssl=="false" ? false : true);
+
+  if(this.https)
+    http = require('https')
+  else
+    http = require('http')
+
   this.host = host ? host : "neoload-api.saas.neotys.com";
   this.apiKey = apiKey;
   this.proxySpec = null;

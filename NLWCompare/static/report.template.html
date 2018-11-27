@@ -7,15 +7,21 @@
 
   <script type="text/javascript">
 
+  var DEFAULT_PERCENTILE = 90;
+  var percLabel = getPercLabel(DEFAULT_PERCENTILE)
+
   function init() {
 
     let params = (new URL(document.location)).searchParams;
+    var perc = params.get("percentile");
+    perc = (perc != undefined && perc != null && !isNaN(parseInt(perc)) && perc >=0 && perc <= 100) ? parseInt(perc) : DEFAULT_PERCENTILE;
+    percLabel = getPercLabel(perc)
 
-    var url = 'api/comparison?baseline='+params.get("baseline")+'&candidate='+params.get("candidate")
+    var url = 'api/comparison?baseline='+params.get("baseline")+'&candidate='+params.get("candidate")+'&percentile='+perc
     $('#apisrc').attr('href',url);
     toggleDump();
 
-    if(!isEmpty($("#dump").val()))
+    if(!isEmpty($("#dump").val()) && "[[json-dump]]".toLowerCase().localeCompare($("#dump").val().trim().toLowerCase()) != 0)
       processData();
     else if(isEmpty(params.get("baseline")))
       alert("This report requires a query parameter 'baseline' corresponding to a valid NeoLoad Web test ID.")
@@ -43,7 +49,9 @@
       });
     }
   }
-
+  function getPercLabel(perc) {
+    return perc+((perc%10==1)?'st':(perc%10==2)?'nd':(perc%10==3)?'rd':'th')+'(ms)';
+  }
   function toggleDump() {
     var isVisible = $('#dump').is(":visible");
     $('#showDump').val((isVisible ? "Show" : "Hide") + " JSON dump")
@@ -90,13 +98,13 @@
     // go-no-go
 
     populatePercentileItems({ targetElement: $("#topTransactions"), items: data.topTransactions, itemType: 'Transaction',
-      baseHeader: '<a href="'+data.links.baseline.transactions+'" target="_blank">Baseline<br />(perc)</a>',
-      candHeader: '<a href="'+data.links.candidate.transactions+'" target="_blank">Candidate<br />(perc)</a>'
+      baseHeader: '<a href="'+data.links.baseline.transactions+'" target="_blank">Baseline<br /><span class="cell-subheader">'+percLabel+'</span></a>',
+      candHeader: '<a href="'+data.links.candidate.transactions+'" target="_blank">Candidate<br /><span class="cell-subheader">'+percLabel+'</span></a>'
     })
 
-    populatePercentileItems({ targetElement: $("#topResponses"), items: data.topRequests, itemType: 'Request',
-      baseHeader: '<a href="'+data.links.baseline.requests+'" target="_blank">Baseline<br />(perc)</a>',
-      candHeader: '<a href="'+data.links.candidate.requests+'" target="_blank">Candidate<br />(perc)</a>'
+    populatePercentileItems({ targetElement: $("#topRequests"), items: data.topRequests, itemType: 'Request',
+      baseHeader: '<a href="'+data.links.baseline.requests+'" target="_blank">Baseline<br /><span class="cell-subheader">'+percLabel+'</span></a>',
+      candHeader: '<a href="'+data.links.candidate.requests+'" target="_blank">Candidate<br /><span class="cell-subheader">'+percLabel+'</span></a>'
     })
 
     populatePercentileItems({ targetElement: $("#errorRates"), items: data.errorsByRequest, itemType: 'Failed Request',
@@ -111,8 +119,8 @@
     populatePercentileItems({ targetElement: $("#allTransactions"), itemType: 'Transaction',
       items: data.transactionVariances.sort((a,b) => a.path.localeCompare(b.path)),
       fLabelProcessor: s => truncateText(s,80),
-      baseHeader: '<a href="'+data.links.baseline.transactions+'" target="_blank">Baseline<br />(perc)</a>',
-      candHeader: '<a href="'+data.links.candidate.transactions+'" target="_blank">Candidate<br />(perc)</a>'
+      baseHeader: '<a href="'+data.links.baseline.transactions+'" target="_blank">Baseline<br /><span class="cell-subheader">'+percLabel+'</span></a>',
+      candHeader: '<a href="'+data.links.candidate.transactions+'" target="_blank">Candidate<br /><span class="cell-subheader">'+percLabel+'</span></a>'
     })
 
     populateViolationsItems({ targetElement: $("#violations"), items: data.violations,
@@ -123,14 +131,14 @@
     populatePercentileItems({ targetElement: $("#allRequests"), itemType: 'Request',
       items: data.requests.sort((a,b) => a.path.localeCompare(b.path)),
       fLabelProcessor: s => truncateText(s,80),
-      baseHeader: '<a href="'+data.links.baseline.requests+'" target="_blank">Baseline<br />(perc)</a>',
-      candHeader: '<a href="'+data.links.candidate.requests+'" target="_blank">Candidate<br />(perc)</a>'
+      baseHeader: '<a href="'+data.links.baseline.requests+'" target="_blank">Baseline<br /><span class="cell-subheader">'+percLabel+'</span></a>',
+      candHeader: '<a href="'+data.links.candidate.requests+'" target="_blank">Candidate<br /><span class="cell-subheader">'+percLabel+'</span></a>'
     })
 
     populateMonitorItems({ targetElement: $("#allMonitors"),
       items: data.monitors.sort((a,b) => a.path.localeCompare(b.path)),
-      baseHeader: '<a href="'+data.links.baseline.counters+'" target="_blank">Baseline<br />(perc)</a>',
-      candHeader: '<a href="'+data.links.candidate.counters+'" target="_blank">Candidate<br />(perc)</a>'
+      baseHeader: '<a href="'+data.links.baseline.counters+'" target="_blank">Baseline<br /><span class="cell-subheader">'+percLabel+'</span></a>',
+      candHeader: '<a href="'+data.links.candidate.counters+'" target="_blank">Candidate<br /><span class="cell-subheader">'+percLabel+'</span></a>'
     })
 
   }
@@ -189,7 +197,7 @@
               (grouping != null ? grouping.headCells : '') +
               '<div class="rTableCell center">'+baseHeader+'</div>'+
               '<div class="rTableCell center">'+candHeader+'</div>'+
-              '<div class="rTableCell"><em>Var</em></div>'+
+              '<div class="rTableCell"><em>Variance</em></div>'+
               '</div>'
     },function() {
       return '</div>'
@@ -253,7 +261,6 @@
         if(itm != undefined && itm != null)
           template.itemCells = [itm.meta.heirarchy.join('|')]
             .map(s => '<div class="rTableCell">'+triageCellValue(s)+'</div>').join('')
-          console.log(template)
         return template;
       }
     }))
@@ -379,9 +386,9 @@
       </div>
       <div id="topTransactions"></div>
       <div class="row">
-        <h3>Responses (var in duration)</h3>
+        <h3>Requests (var in duration)</h3>
       </div>
-      <div id="topResponses"></div>
+      <div id="topRequests"></div>
     </div>
     <!--div class="threecol">
       <div class="row">
@@ -403,7 +410,7 @@
 
   <div style="clear:both;float:none;" class="page-break-after">&nbsp;</div>
 
-  <h2>Key Server Metrics</h2>
+  <h2>Violations</h2>
 
   <div class="colbox">
     <div class="onecol">
@@ -445,7 +452,7 @@
 
   <button id="showdump" onclick="toggleDump()">Show JSON dump</button>
 
-  <textarea id="dump" style="width:100%;height:80px;"></textarea>
+  <textarea id="dump" style="width:100%;height:80px;">[[json-dump]]</textarea>
 
   <script async src="https://ajax.googleapis.com/ajax/libs/jquery/3.3.1/jquery.min.js" onload="init()"></script>
 
@@ -523,6 +530,8 @@
   .right-align { text-align:right; }
   .center { text-align:center; }
   .rTableCell > span { color:blue; }
+
+  span.cell-subheader { font-size:70%; font-weight:normal; }
 
   .non-value { color:gray; }
   .good-value { color:green; }

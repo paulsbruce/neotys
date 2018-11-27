@@ -56,12 +56,13 @@ app.use(function(req, res, next) {
 });
 
 var hashComparisons = new HashMap()
+const DEFAULT_PERCENTILE = 90;
 
 function Comparison(baseId,candId) {
   this.baseId = baseId;
   this.candId = candId;
   this.body = null;
-  this.getKey = function() { return this.baseId+this.candId; }
+  this.getKey = function() { return this.baseId+this.candId+this.aggregator.percentile; }
   this.aggregator = new Aggregator()
 }
 function Aggregator() {
@@ -72,6 +73,7 @@ function Aggregator() {
   this.agg_monitors = new HashMap();
   this.monitor_values = new HashMap();
   this.monitor_points = new HashMap();
+  this.percentile = DEFAULT_PERCENTILE;
 }
 
 app.route('/api/comparison')
@@ -80,6 +82,9 @@ app.route('/api/comparison')
     var candId = req.query.candidate;
 
     var comparison = new Comparison(baseId,candId);
+    var perc = (req.query.percentile != undefined && req.query.percentile != null && !isNaN(parseInt(req.query.percentile))) ? parseInt(req.query.percentile) : DEFAULT_PERCENTILE;
+    comparison.aggregator.percentile = (perc >= 0 && perc <= 100 ? perc : DEFAULT_PERCENTILE);
+
     if(hashComparisons.has(comparison.getKey())) {
       comparison = hashComparisons.get(comparison.getKey())
       res.json(comparison.body);
@@ -413,14 +418,14 @@ app.route('/api/comparison')
                 if(candValues.length != 1) console.error('candValues is not a 1-sized array!!!')
                 baseAll = baseAll.concat(baseValues[0])
                 candAll = candAll.concat(candValues[0])
-                req.basePercentile = calcPercentile(baseValues[0], o => o.AVG_DURATION)
-                req.candPercentile = calcPercentile(candValues[0], o => o.AVG_DURATION)
+                req.basePercentile = calcPercentile(aggregator.percentile,baseValues[0], o => o.AVG_DURATION)
+                req.candPercentile = calcPercentile(aggregator.percentile,candValues[0], o => o.AVG_DURATION)
                 req.varianceInPercentile = (req.basePercentile != 0 ? (req.candPercentile / req.basePercentile) - 1.0 : 0);
                 return req;
               });
           //tran.requests = reqs;
-          tran.basePercentile = calcPercentile(baseAll, o => o.AVG_DURATION)
-          tran.candPercentile = calcPercentile(candAll, o => o.AVG_DURATION)
+          tran.basePercentile = calcPercentile(aggregator.percentile,baseAll, o => o.AVG_DURATION)
+          tran.candPercentile = calcPercentile(aggregator.percentile,candAll, o => o.AVG_DURATION)
           tran.varianceInPercentile = (tran.basePercentile != 0 ? (tran.candPercentile / tran.basePercentile) - 1.0 : 0);
           if(baseAll.length < 1)
             if(debugLogic) console.error('tran['+tran.path+'] has no values, but '+reqs.length+' requests')
@@ -430,7 +435,7 @@ app.route('/api/comparison')
   }
 
 
-  function calcPercentile(arr,fMap) {
+  function calcPercentile(percentile,arr,fMap) {
     if(arr == undefined || arr == null || !Array.isArray(arr)) {
       console_log('bad array passed to calcPercentile: ' + JSON.stringify(arr))
       return 0;
@@ -440,7 +445,7 @@ app.route('/api/comparison')
         return 0;
       else {
         var values = arr.map(o => fMap(o));
-        return get_percentile(90,values)
+        return get_percentile(percentile,values)
       }
     }
   }
@@ -569,8 +574,8 @@ app.route('/api/comparison')
               .map(mon => {
                 var basePoints = aggregator.monitor_points.get(mon.baselineTestId+mon.baselineMonitorId)
                 var candPoints = aggregator.monitor_points.get(mon.candidateTestId+mon.candidateMonitorId)
-                mon.basePercentile = calcPercentile(basePoints, o => o.AVG)
-                mon.candPercentile = calcPercentile(candPoints, o => o.AVG)
+                mon.basePercentile = calcPercentile(aggregator.percentile,basePoints, o => o.AVG)
+                mon.candPercentile = calcPercentile(aggregator.percentile,candPoints, o => o.AVG)
                 mon.varianceInPercentile = (mon.basePercentile != 0 ? (mon.candPercentile / mon.basePercentile) - 1.0 : 0);
                 mon.meta = deriveMonitorMeta(mon)
               })
@@ -621,17 +626,17 @@ app.route('/api/comparison')
   function getMonitorViolationRules() {
     return [
       {
-        name: 'OS Counters >10% variance',
+        name: 'OS Counters > 10% variance',
         isCritical: function(mon) { return osCriticals().includes(mon.meta.label) },
         isInViolation: function(mon) { return mon.meta.category == 'OS' && mon.varianceInPercentile > 0.10 }
       },
       {
-        name: 'WebLogic Counters >10% variance',
+        name: 'WebLogic Counters > 10% variance',
         isCritical: function(mon) { return wlCriticals().includes(mon.meta.label) },
         isInViolation: function(mon) { return mon.meta.category == 'WebLogic' && mon.varianceInPercentile > 0.10 }
       },
       {
-        name: 'JMX Counters >10% variance',
+        name: 'JMX Counters > 5% variance',
         isCritical: function(mon) { return jmxCriticals().includes(mon.meta.label) },
         isInViolation: function(mon) { return mon.meta.category == 'JMX' && mon.varianceInPercentile > 0.05 }
       }
@@ -665,18 +670,23 @@ app.route('/api/comparison')
   function jmxCriticals() { return ['HeapFreeCurrent'] }
 
   function applyViolationCalcs(aggregator) {
-    getMonitorViolationRules().map(rule => {
-      aggregator.agg_monitors.values()
-          .filter(v => { return v != null; })
-          .filter(v => { return rule.isInViolation(v); })
-          .forEach(mon => {
-            if(mon.violations == null || mon.violations == null) mon.violations = []
-            mon.violations.push({
-              rule: rule.name,
-              critical: rule.isCritical(mon)
+    if(!(aggregator.violationsApplied != undefined && aggregator.violationsApplied != null && aggregator.violationsApplied==true))
+    {
+      aggregator.violationsApplied = true
+
+      getMonitorViolationRules().map(rule => {
+        aggregator.agg_monitors.values()
+            .filter(v => { return v != null; })
+            .filter(v => { return rule.isInViolation(v); })
+            .forEach(mon => {
+              if(mon.violations == null || mon.violations == null) mon.violations = []
+              mon.violations.push({
+                rule: rule.name,
+                critical: rule.isCritical(mon)
+              })
             })
-          })
-    })
+      })
+    }
   }
   function promiseViolations(aggregator,baseId,candId) {
     var prom = getOrFillMonitors(aggregator,baseId,candId);
