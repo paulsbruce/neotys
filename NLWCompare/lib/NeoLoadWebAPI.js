@@ -14,14 +14,15 @@ var http = require('https');
 var HttpProxyAgent = require('http-proxy-agent');
 var HttpsProxyAgent = require('https-proxy-agent');
 
-http.globalAgent.maxSockets = 20;
 var sleepBetweenRequests = 20;
 var sleepBetweenRpsResampling = 100;
 var arrHttpThroughput = []
-var maxConcurrentRequests = (http.globalAgent.maxSockets / 10);
+var maxConcurrentRequests = 20;
 var currentRequestCount = 0;
 var lastRps = 0;
 var maxRps = maxConcurrentRequests;
+
+http.globalAgent.maxSockets = maxConcurrentRequests;
 
 var debugHttp = false;
 var debugCache = false;
@@ -262,7 +263,7 @@ function NLWAPI(apiKey, host, ssl) {
   function recalcHttpThroughputControls() {
     if(lastRps >= maxRps && maxConcurrentRequests > 1)
       maxConcurrentRequests--
-    else if(maxConcurrentRequests < http.globalAgent.maxSockets)
+    else if(maxConcurrentRequests < maxRps)
       maxConcurrentRequests++
   }
 
@@ -354,8 +355,8 @@ function NLWAPI(apiKey, host, ssl) {
         fProcess = function() {
           recalcHttpThroughputControls() // instant recalc
           if(
-            //(currentRequestCount < maxConcurrentRequests)
-            //&&
+            (currentRequestCount < maxConcurrentRequests)
+            &&
             (lastRps < maxRps)
           ) {
             currentRequestCount++;

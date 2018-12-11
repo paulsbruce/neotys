@@ -64,16 +64,16 @@
     return (val == undefined || val == null || (val+"").trim().length < 1)
   }
 
-  function processData(data) {
+  function processData() {
     $(".preloader").hide();
 
     var summaryTemplate = $("#baseSummary").html()
     $("#candSummary").html(summaryTemplate.replaceAll('"base','"cand'));
     $("#candTemplateName").html("Candidate")
 
-    $("#timestamp").text((new Date()).toLocaleString())
+    data = JSON.parse($("#dump").val())
 
-    var data = JSON.parse($("#dump").val())
+    $("#timestamp").text((new Date(data.generatedOn)).toLocaleString())
 
     populateSummary('base',data.baselineSummary)
     populateSummary('cand',data.candidateSummary)
@@ -120,7 +120,8 @@
       items: data.transactionVariances.sort((a,b) => a.path.localeCompare(b.path)),
       fLabelProcessor: s => truncateText(s,80),
       baseHeader: '<a href="'+data.links.baseline.transactions+'" target="_blank">Baseline<br /><span class="cell-subheader">'+percLabel+'</span></a>',
-      candHeader: '<a href="'+data.links.candidate.transactions+'" target="_blank">Candidate<br /><span class="cell-subheader">'+percLabel+'</span></a>'
+      candHeader: '<a href="'+data.links.candidate.transactions+'" target="_blank">Candidate<br /><span class="cell-subheader">'+percLabel+'</span></a>',
+      fColumnGrouper: (itm,ctx) => includeCountColumns('Transaction',itm,ctx)
     })
 
     populateViolationsItems({ targetElement: $("#violations"), items: data.violations,
@@ -132,7 +133,8 @@
       items: data.requests.sort((a,b) => a.path.localeCompare(b.path)),
       fLabelProcessor: s => truncateText(s,80),
       baseHeader: '<a href="'+data.links.baseline.requests+'" target="_blank">Baseline<br /><span class="cell-subheader">'+percLabel+'</span></a>',
-      candHeader: '<a href="'+data.links.candidate.requests+'" target="_blank">Candidate<br /><span class="cell-subheader">'+percLabel+'</span></a>'
+      candHeader: '<a href="'+data.links.candidate.requests+'" target="_blank">Candidate<br /><span class="cell-subheader">'+percLabel+'</span></a>',
+      fColumnGrouper: (itm,ctx) => includeCountColumns('Request',itm,ctx)
     })
 
     populateMonitorItems({ targetElement: $("#allMonitors"),
@@ -143,6 +145,31 @@
 
   }
 
+  function includeCountColumns(itemType,itm,ctx) {
+    var template = {
+      headCells: [
+        {s:itemType,a:''},
+        {s:'Baseline<br />Call Count',a:'center'},
+        {s:'Candidate<br />Call Count',a:'center'}
+      ]
+        .map(h => '<div class="rTableCell '+ctx.baseClass+' '+h.a+'">'+h.s+'</div>').join('')
+    }
+    if(itm != undefined && itm != null) {
+      var path = itm['path'].split('|')
+      var lastOfPath = truncateText(path[path.length-1]);
+      if(itm['path'].indexOf('/')<0) lastOfPath = truncateText(itm['path']);
+      if(lastOfPath.indexOf('<')==0)
+        lastOfPath = path.slice(path.length-2,path.length).map(s => truncateText(s).toHtmlEntities()).join('|');
+      var detailExtraValues = [
+        triageCellValue(lastOfPath),
+        itm.baselineCount,
+        itm.candidateCount
+      ]
+      template.itemCells = detailExtraValues
+        .map(s => '<div class="rTableCell '+ctx.candClass+' '+(isNaN(s) ? '' : 'center')+'" title="'+triageCellValue(itm['path'],false).toHtmlEntities()+'">'+triageCellValue(s+"")+'</div>').join('')
+    }
+    return template;
+  }
 
   function populateSummary(uiPrefix,data) {
     $('#'+uiPrefix+'Name').text(data.name)
@@ -170,6 +197,10 @@
     var baseHeader = isEmpty(opts.baseHeader) ? 'Baseline' : opts.baseHeader;
     var candHeader = isEmpty(opts.candHeader) ? 'Candidate' : opts.candHeader;
     var varianceKey = isEmpty(opts.varianceKey) ? 'varianceInPercentile' : opts.varianceKey;
+    var ctx = {
+      'baseClass': '',
+      'candClass': ''
+    }
 
     return populateByTemplate(opts.targetElement,opts.items,function(item) {
       var gt = (item[baseKey]<item[candKey]);
@@ -181,16 +212,19 @@
       var rowLabel = (opts.fLabelProcessor != undefined && opts.fLabelProcessor != null && typeof opts.fLabelProcessor == 'function') ?
         opts.fLabelProcessor(item[labelKey]) : truncateText(item[labelKey])
 
-      var grouping = (typeof opts.fColumnGrouper == 'function') ? opts.fColumnGrouper(item) : null;
+      ctx.baseClass = baseClass
+      ctx.candClass = candClass
+
+      var grouping = (typeof opts.fColumnGrouper == 'function') ? opts.fColumnGrouper(item,ctx) : null;
       return '<div class="rTableRow">'+
-              triageCellValue(grouping == null ? '<div class="rTableCell row-label '+pathClass+'">'+rowLabel+'</div>' : '')+
+              triageCellValue(grouping == null ? '<div class="rTableCell row-label '+pathClass+'" title="'+triageCellValue(item['path'],false).toHtmlEntities()+'">'+rowLabel+'</div>' : '')+
               (grouping != null ? grouping.itemCells : '') +
               '<div class="rTableCell '+baseClass+' center">'+round(item[baseKey],3)+'</div>'+
               '<div class="rTableCell '+candClass+' center">'+round(item[candKey],3)+'</div>'+
               '<div class="rTableCell '+candClass+'">'+formatPercent(item[varianceKey],2)+'</div>'+
               '</div>'
     },function() {
-      var grouping = (typeof opts.fColumnGrouper == 'function') ? opts.fColumnGrouper(opts.items[0]) : null;
+      var grouping = (typeof opts.fColumnGrouper == 'function') ? opts.fColumnGrouper(opts.items[0],ctx) : null;
       return '<div class="rTable">'+
               '<div class="rTableHeading">'+
               (grouping == null ? '<div class="rTableCell">'+opts.itemType+'</div>' : '')+
@@ -203,10 +237,11 @@
       return '</div>'
     })
   }
-  function triageCellValue(input) {
+  function triageCellValue(input,forHtml) {
+    forHtml = !(forHtml) ? false : true;
     return input
       .replaceAll("|Actions|","|")
-      .replaceAll('|','<span class="bread-arrow">⇒</span>')
+      .replaceAll('|',(forHtml ? '<span class="bread-arrow">' : ' ')+'⇒'+(forHtml ? '</span>' : '\n\n'))
   }
   //targetElement,items,itemType,fLabelProcessor,labelKey,baseKey,candKey,varianceKey,fColumnGrouper
   function populateViolationsItems(opts) {
@@ -226,7 +261,7 @@
                   targetElement: $('#nonpresentElement'),
                   items: grp.monitors,
                   itemType: grp.violationType,
-                  fColumnGrouper: function(itm) {
+                  fColumnGrouper: function(itm,ctx) {
                     var template = {
                       headCells: itm.meta.heirarchy
                         .map(s => '<div class="rTableCell center">&nbsp;</div>').join('')
@@ -253,7 +288,7 @@
 
     populatePercentileItems(copyOver(opts,{
       itemType: 'Monitor',
-      fColumnGrouper: function(itm) {
+      fColumnGrouper: function(itm,ctx) {
         var template = {
           headCells: ['Monitor']
             .map(s => '<div class="rTableCell">'+s+'</div>').join('')
@@ -293,6 +328,11 @@
   String.prototype.replaceAll = function(search, replacement) {
     var target = this;
     return target.split(search).join(replacement);
+  };
+  String.prototype.toHtmlEntities = function() {
+    return this.replace(/./gm, function(s) {
+        return "&#" + s.charCodeAt(0) + ";";
+    });
   };
   function time_convert(num,secRound)
   {
@@ -542,7 +582,7 @@
   .nogo { color:red; }
   div.nogoreasons { font-style:italic; text-align:center; }
   a.nogoreasons:link,a.nogoreasons:active,a.nogoreasons:visited,a.nogoreasons:hover { color:gray; }
-  .timestamp { color:gray; display:none; }
+  .timestamp { color:gray; }
 
   span.bread-arrow { color:#ccc; padding-left:0.2em; padding-right:0.2em; }
   .violation-cell { padding-left:0.2em; padding-right:0.2em; }

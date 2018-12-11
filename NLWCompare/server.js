@@ -246,23 +246,23 @@ app.route('/api/comparison')
           console_log('here is where we fill transaction percentiles')
         })
     })*/
-    /*.then(r => {
+    .then(r => {
       return Promise.all(
-        agg.values().filter(v => { return v != null; })
+        aggregator.agg_trans.values().filter(v => { return v != null; })
         .map(entry => {
           return Promise.all([
             nlw.values({ test: { id: baseId }, id: entry.baselineElementId }).then(r => {
               //entry.baselineValues = r;
-              entry.baselineValue = r.avgDuration;
+              entry.baselineCount = r.count;
             }),
             nlw.values({ test: { id: candId }, id: entry.candidateElementId }).then(r => {
               //entry.candidateValues = r;
-              entry.candidateValue = r.avgDuration;
+              entry.candidateCount = r.count;
             })
           ])
         })
       )
-    })*/
+    })
   }
 
   function stowTransactions(agg,rs,funcSetValues) {
@@ -361,11 +361,13 @@ app.route('/api/comparison')
             return Promise.all([
               nlw.values({ test: { id: baseId }, id: entry.baselineElementId }).then(r => {
                 aggregator.request_values.set(baseId+entry.baselineElementId, r);
+                entry.baselineCount = r.count;
                 entry.baselineFailureCount = r.failureCount;
                 entry.baselineAverageDuration = r.avgDuration;
               }),
               nlw.values({ test: { id: candId }, id: entry.candidateElementId }).then(r => {
                 aggregator.request_values.set(candId+entry.baselineElementId, r);
+                entry.candidateCount = r.count;
                 entry.candidateFailureCount = r.failureCount;
                 entry.candidateAverageDuration = r.avgDuration;
               }),
@@ -420,13 +422,13 @@ app.route('/api/comparison')
                 candAll = candAll.concat(candValues[0])
                 req.basePercentile = calcPercentile(aggregator.percentile,baseValues[0], o => o.AVG_DURATION)
                 req.candPercentile = calcPercentile(aggregator.percentile,candValues[0], o => o.AVG_DURATION)
-                req.varianceInPercentile = (req.basePercentile != 0 ? (req.candPercentile / req.basePercentile) - 1.0 : 0);
+                req.varianceInPercentile = calcVariance(req.basePercentile,req.candPercentile)
                 return req;
               });
           //tran.requests = reqs;
           tran.basePercentile = calcPercentile(aggregator.percentile,baseAll, o => o.AVG_DURATION)
           tran.candPercentile = calcPercentile(aggregator.percentile,candAll, o => o.AVG_DURATION)
-          tran.varianceInPercentile = (tran.basePercentile != 0 ? (tran.candPercentile / tran.basePercentile) - 1.0 : 0);
+          tran.varianceInPercentile = calcVariance(tran.basePercentile,tran.candPercentile)
           if(baseAll.length < 1)
             if(debugLogic) console.error('tran['+tran.path+'] has no values, but '+reqs.length+' requests')
         })
@@ -434,6 +436,11 @@ app.route('/api/comparison')
     }
   }
 
+  function calcVariance(baseValue,candValue) {
+    var diff = parseFloat(baseValue) - parseFloat(candValue)
+    var delta = diff / parseFloat(baseValue)
+    return delta
+  }
 
   function calcPercentile(percentile,arr,fMap) {
     if(arr == undefined || arr == null || !Array.isArray(arr)) {
