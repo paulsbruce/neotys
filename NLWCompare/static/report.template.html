@@ -121,7 +121,8 @@
       fLabelProcessor: s => truncateText(s,80),
       baseHeader: '<a href="'+data.links.baseline.transactions+'" target="_blank">Baseline<br /><span class="cell-subheader">'+percLabel+'</span></a>',
       candHeader: '<a href="'+data.links.candidate.transactions+'" target="_blank">Candidate<br /><span class="cell-subheader">'+percLabel+'</span></a>',
-      fColumnGrouper: (itm,ctx) => includeCountColumns('Transaction',itm,ctx)
+      fColumnGrouper: (itm,ctx) => includeCountColumns('Transaction',itm,ctx),
+      varianceLabel: '<em>Variance</em><br /><span class="cell-subheader">(c-b)/c</span>'
     })
 
     populateViolationsItems({ targetElement: $("#violations"), items: data.violations,
@@ -134,7 +135,8 @@
       fLabelProcessor: s => truncateText(s,80),
       baseHeader: '<a href="'+data.links.baseline.requests+'" target="_blank">Baseline<br /><span class="cell-subheader">'+percLabel+'</span></a>',
       candHeader: '<a href="'+data.links.candidate.requests+'" target="_blank">Candidate<br /><span class="cell-subheader">'+percLabel+'</span></a>',
-      fColumnGrouper: (itm,ctx) => includeCountColumns('Request',itm,ctx)
+      fColumnGrouper: (itm,ctx) => includeCountColumns('Request',itm,ctx),
+      varianceLabel: '<em>Variance</em><br /><span class="cell-subheader">(c-b)/c</span>'
     })
 
     populateMonitorItems({ targetElement: $("#allMonitors"),
@@ -197,6 +199,7 @@
     var baseHeader = isEmpty(opts.baseHeader) ? 'Baseline' : opts.baseHeader;
     var candHeader = isEmpty(opts.candHeader) ? 'Candidate' : opts.candHeader;
     var varianceKey = isEmpty(opts.varianceKey) ? 'varianceInPercentile' : opts.varianceKey;
+    var varianceLabel = (opts.varianceLabel != undefined && opts.varianceLabel != null ? opts.varianceLabel : '<em>Variance</em>')
     var ctx = {
       'baseClass': '',
       'candClass': ''
@@ -231,7 +234,7 @@
               (grouping != null ? grouping.headCells : '') +
               '<div class="rTableCell center">'+baseHeader+'</div>'+
               '<div class="rTableCell center">'+candHeader+'</div>'+
-              '<div class="rTableCell"><em>Variance</em></div>'+
+              '<div class="rTableCell">'+varianceLabel+'</div>'+
               '</div>'
     },function() {
       return '</div>'

@@ -6,7 +6,10 @@ const express = require('express'),
   port = argv.port || 3000,
   path = require('path'),
   bodyParser = require('body-parser')
+const fs = require('fs');
 
+const GlobalRules = require('./lib/rules.js'), globalRules = GlobalRules.create()
+var monitorViolationRules = globalRules.getMonitorViolationRules();
 /*
   // Setup View Engine
   app.set('views', path.join(__dirname, 'views'));
@@ -78,6 +81,21 @@ function Aggregator() {
 
 app.route('/api/comparison')
   .get(function(req, res) {
+    var ctx = getContext(req)
+
+    if(hashComparisons.has(ctx.comparison.getKey())) {
+      ctx.comparison = hashComparisons.get(ctx.comparison.getKey())
+      res.json(ctx.comparison.body);
+    }
+    else {
+      promiseTheBody(ctx)
+      .then(body => {
+        res.json(body);
+      })
+    }
+  });
+
+  function getContext(req) {
     var baseId = req.query.baseline;
     var candId = req.query.candidate;
 
@@ -85,87 +103,106 @@ app.route('/api/comparison')
     var perc = (req.query.percentile != undefined && req.query.percentile != null && !isNaN(parseInt(req.query.percentile))) ? parseInt(req.query.percentile) : DEFAULT_PERCENTILE;
     comparison.aggregator.percentile = (perc >= 0 && perc <= 100 ? perc : DEFAULT_PERCENTILE);
 
-    if(hashComparisons.has(comparison.getKey())) {
-      comparison = hashComparisons.get(comparison.getKey())
-      res.json(comparison.body);
+    return {
+      baseId: baseId,
+      candId: candId,
+      comparison: comparison
     }
-    else {
-      var body = {
-        baseId: baseId,
-        candId: candId,
-        generatedOn: (new Date()).getTime(),
-        links: {
-          baseline: {
-            overview: nlw.getOverviewUrl(baseId),
-            counters: nlw.getCountersUrl(baseId),
-            transactions: nlw.getTransactionsUrl(baseId),
-            requests: nlw.getRequestsUrl(baseId)
-          },
-          candidate: {
-            overview: nlw.getOverviewUrl(candId),
-            counters: nlw.getCountersUrl(candId),
-            transactions: nlw.getTransactionsUrl(candId),
-            requests: nlw.getRequestsUrl(candId)
-          }
+  }
+  function promiseTheBody(ctx) {
+    var baseId = ctx.baseId;
+    var candId = ctx.candId;
+    var comparison = ctx.comparison;
+
+    var body = {
+      baseId: baseId,
+      candId: candId,
+      generatedOn: (new Date()).getTime(),
+      links: {
+        baseline: {
+          overview: nlw.getOverviewUrl(baseId),
+          counters: nlw.getCountersUrl(baseId),
+          transactions: nlw.getTransactionsUrl(baseId),
+          requests: nlw.getRequestsUrl(baseId)
         },
-        baselineSummary: {},
-        candidateSummary: {},
-        topTransactions: {},
-        topRequests: {},
-        errorsByRequest: {},
-        violations: [],
-        transactionVariances: {},
-        monitors: {}
-        /*,
-        requests: {}
-        */
-      };
+        candidate: {
+          overview: nlw.getOverviewUrl(candId),
+          counters: nlw.getCountersUrl(candId),
+          transactions: nlw.getTransactionsUrl(candId),
+          requests: nlw.getRequestsUrl(candId)
+        }
+      },
+      baselineSummary: {},
+      candidateSummary: {},
+      topTransactions: {},
+      topRequests: {},
+      errorsByRequest: {},
+      violations: [],
+      transactionVariances: {},
+      monitors: {}
+      /*,
+      requests: {}
+      */
+    };
 
-      Promise.all([
-        promiseTestStatistics(comparison.aggregator,baseId).then(o => {
-          body.baselineSummary = o
-        }),
-        promiseTestStatistics(comparison.aggregator,candId).then(o => {
-          body.candidateSummary = o
-        }),
-        promiseMonitors(comparison.aggregator,baseId,candId).then(o => {
-          body.monitors = o
-        }),
-        promiseViolations(comparison.aggregator,baseId,candId).then(o => {
-          body.violations = o;
-        }),
-        promiseErrorsByRequest(comparison.aggregator,baseId,candId).then(o => {
-          body.errorsByRequest = o
-        }),
-        promiseTransactionVariances(comparison.aggregator,baseId,candId).then(o => {
-          body.transactionVariances = o
-        }),
-        promiseTopRequests(comparison.aggregator,baseId,candId).then(o => {
-          body.topRequests = o
-        }),
-        ,
-        promiseRequestDetails(comparison.aggregator,baseId,candId).then(o => {
-          body.requests = o
-        })
-
-      ]).then(r => {
-        // greedy grab all transaction data to calculate percentiles before summarizing
-        return promiseTopTransactions(comparison.aggregator,baseId,candId).then(o => {
-          body.topTransactions = o
-        })
+    return Promise.all([
+      promiseTestStatistics(comparison.aggregator,baseId).then(o => {
+        body.baselineSummary = o
+      }),
+      promiseTestStatistics(comparison.aggregator,candId).then(o => {
+        body.candidateSummary = o
+      }),
+      promiseMonitors(comparison.aggregator,baseId,candId).then(o => {
+        body.monitors = o
+      }),
+      promiseViolations(comparison.aggregator,baseId,candId).then(o => {
+        body.violations = o;
+      }),
+      promiseErrorsByRequest(comparison.aggregator,baseId,candId).then(o => {
+        body.errorsByRequest = o
+      }),
+      promiseTransactionVariances(comparison.aggregator,baseId,candId).then(o => {
+        body.transactionVariances = o
+      }),
+      promiseTopRequests(comparison.aggregator,baseId,candId).then(o => {
+        body.topRequests = o
+      }),
+      ,
+      promiseRequestDetails(comparison.aggregator,baseId,candId).then(o => {
+        body.requests = o
       })
-      .then(r => {
-        comparison.body = body;
-        hashComparisons.set(comparison.getKey(),comparison)
-        res.json(body);
-      })
-    }
-  });
 
+    ]).then(r => {
+      // greedy grab all transaction data to calculate percentiles before summarizing
+      return promiseTopTransactions(comparison.aggregator,baseId,candId).then(o => {
+        body.topTransactions = o
+      })
+    })
+    .then(r => {
+      comparison.body = body;
+      hashComparisons.set(comparison.getKey(),comparison)
+      return body
+    })
+  }
 
   app.route('/report')
     .get(function(req, res) {
       res.sendFile(path.join(__dirname + '/static/report.template.html'))
+    });
+
+  app.route('/bundle')
+    .get(function(req, res) {
+      var ctx = getContext(req)
+      var temp = fs.readFileSync(path.join(__dirname + '/static/report.template.html'), 'utf8')
+      return promiseTheBody(ctx)
+      .then(body => {
+        return temp.replace('>[[json-dump]]<','>'+JSON.stringify(body)+'<')
+      })
+      .then(final => {
+        res.set('Content-Type', 'text/html');
+        res.send(Buffer.from(final));
+        res.status(200).end();
+      })
     });
 
 
@@ -437,8 +474,11 @@ app.route('/api/comparison')
   }
 
   function calcVariance(baseValue,candValue) {
-    var diff = parseFloat(baseValue) - parseFloat(candValue)
-    var delta = diff / parseFloat(baseValue)
+    //var flip = baseValue > candValue
+    //var diff = parseFloat(flip ? candValue : baseValue) - parseFloat(flip ? baseValue : candValue)
+    //var delta = diff / parseFloat(flip ? candValue : baseValue)
+    var diff = parseFloat(candValue) - parseFloat(baseValue)
+    var delta = diff / parseFloat(candValue)
     return delta
   }
 
@@ -601,16 +641,18 @@ app.route('/api/comparison')
 
   function deriveMonitorMeta(mon) {
     var cat = 'Other'
-    var lc = mon.path.toLowerCase();
     var arr = mon.path.split('|')
     var heir = arr
-    if(lc.indexOf('linux') > -1 || lc.indexOf('windows') > -1)
-      cat = 'OS'
-    else if(lc.indexOf('jvm') > -1)
-      cat = 'JMX'
-    else if(lc.indexOf('weblogic') > -1) {
-      cat = 'WebLogic';
-      //preecomad01.preprod.yourdomain.com_WebLogic Counters/weblogic/youfapps36/JDBC/DataSource/YOURSVCS/ActiveConnectionsHighCount
+
+    for(var i=0; i<monitorViolationRules.length; i++) {
+      var rule = monitorViolationRules[i]
+      var thisCat = (rule.fCategoryProcessor != undefined && rule.fCategoryProcessor != null)
+        ? (typeof rule.fCategoryProcessor == 'function' ? rule.fCategoryProcessor(mon) : rule.fCategoryProcessor)
+        : null;
+      if(thisCat != null) {
+        cat = thisCat;
+        break;
+      }
     }
 
     var first = arr[0].split('_');
@@ -630,58 +672,12 @@ app.route('/api/comparison')
     return ret;
   }
 
-  function getMonitorViolationRules() {
-    return [
-      {
-        name: 'OS Counters > 10% variance',
-        isCritical: function(mon) { return osCriticals().includes(mon.meta.label) },
-        isInViolation: function(mon) { return mon.meta.category == 'OS' && mon.varianceInPercentile > 0.10 }
-      },
-      {
-        name: 'WebLogic Counters > 10% variance',
-        isCritical: function(mon) { return wlCriticals().includes(mon.meta.label) },
-        isInViolation: function(mon) { return mon.meta.category == 'WebLogic' && mon.varianceInPercentile > 0.10 }
-      },
-      {
-        name: 'JMX Counters > 5% variance',
-        isCritical: function(mon) { return jmxCriticals().includes(mon.meta.label) },
-        isInViolation: function(mon) { return mon.meta.category == 'JMX' && mon.varianceInPercentile > 0.05 }
-      }
-    ]
-  }
-
-  function osCriticals() { return [
-    '% User Memory',
-    'Swap Used',
-    'CPU User',
-    'Process Runnable'
-  ]}
-  function wlCriticals() { return [
-    'ActiveConnectionsHighCount',
-    'ActiveConnectionsAverageCount',
-    'CurrCapacity',
-    'FailedReserveRequestCount',
-    'HighestNumUnavailable',
-    'LeakedConnectionCount',
-    'PrepStmtCacheAccessCount',
-    'ReserveRequestCount',
-    'WaitingForConnectionCurrentCount',
-    'WaitingForConnectionHighCount',
-    'ConnectionDelayTime',
-    'ConnectionsTotalCount',
-    'NumUnavailable',
-    'HoggingThreadCount',
-    'HoggingThreadCount',
-    'StruckThreadCount',
-  ]}
-  function jmxCriticals() { return ['HeapFreeCurrent'] }
-
   function applyViolationCalcs(aggregator) {
     if(!(aggregator.violationsApplied != undefined && aggregator.violationsApplied != null && aggregator.violationsApplied==true))
     {
       aggregator.violationsApplied = true
 
-      getMonitorViolationRules().map(rule => {
+      monitorViolationRules.map(rule => {
         aggregator.agg_monitors.values()
             .filter(v => { return v != null; })
             .filter(v => { return rule.isInViolation(v); })
