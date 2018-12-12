@@ -5,10 +5,18 @@ module.exports = {
   }
 };
 
-function GlobalRules(options) {
+function GlobalRules(options) { // a container for custom rules
 
-  var lc = (mon) => mon.path.toLowerCase();
+  var lc = (mon) => mon.path.toLowerCase(); // a helper function to lowercase monitor path
 
+  /*
+    Rule Definition:
+      - name: the name of the rule that will be displayed/grouped on the report
+      - fCategoryProcessor: a pre-processor to derive generic category often useful in below determination functions
+      - isCritical: determines if a given monitor might be considered critical (organoization-specific)
+      - isInViolation: determines if a given monitor is in fact outside the bounds of acceptable (organoization-specific)
+  */
+  // DO NOT CHANGE // this is what the main server.js will call to obtain a list of custom rules
   this.getMonitorViolationRules = function() {
     return [
       {
@@ -32,6 +40,7 @@ function GlobalRules(options) {
     ]
   }
 
+  // (organization-specific) helper functions to refactor lists of known monitor names out of above rules definitions
   function osCriticals() { return [
     '% User Memory',
     'Swap Used',
@@ -56,5 +65,7 @@ function GlobalRules(options) {
     'HoggingThreadCount',
     'StruckThreadCount',
   ]}
-  function jmxCriticals() { return ['HeapFreeCurrent'] }
+  function jmxCriticals() { return [
+    'HeapFreeCurrent'
+  ] }
 }

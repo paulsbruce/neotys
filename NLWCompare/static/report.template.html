@@ -122,7 +122,7 @@
       baseHeader: '<a href="'+data.links.baseline.transactions+'" target="_blank">Baseline<br /><span class="cell-subheader">'+percLabel+'</span></a>',
       candHeader: '<a href="'+data.links.candidate.transactions+'" target="_blank">Candidate<br /><span class="cell-subheader">'+percLabel+'</span></a>',
       fColumnGrouper: (itm,ctx) => includeCountColumns('Transaction',itm,ctx),
-      varianceLabel: '<em>Variance</em><br /><span class="cell-subheader">(c-b)/c</span>'
+      varianceLabel: '<em>Variance</em><br /><span class="cell-subheader">diff / min</span>'
     })
 
     populateViolationsItems({ targetElement: $("#violations"), items: data.violations,
@@ -136,7 +136,7 @@
       baseHeader: '<a href="'+data.links.baseline.requests+'" target="_blank">Baseline<br /><span class="cell-subheader">'+percLabel+'</span></a>',
       candHeader: '<a href="'+data.links.candidate.requests+'" target="_blank">Candidate<br /><span class="cell-subheader">'+percLabel+'</span></a>',
       fColumnGrouper: (itm,ctx) => includeCountColumns('Request',itm,ctx),
-      varianceLabel: '<em>Variance</em><br /><span class="cell-subheader">(c-b)/c</span>'
+      varianceLabel: '<em>Variance</em><br /><span class="cell-subheader">diff / min</span>'
     })
 
     populateMonitorItems({ targetElement: $("#allMonitors"),

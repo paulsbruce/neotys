@@ -478,7 +478,12 @@ app.route('/api/comparison')
     //var diff = parseFloat(flip ? candValue : baseValue) - parseFloat(flip ? baseValue : candValue)
     //var delta = diff / parseFloat(flip ? candValue : baseValue)
     var diff = parseFloat(candValue) - parseFloat(baseValue)
-    var delta = diff / parseFloat(candValue)
+    var delta = diff / parseFloat(
+      Math.min(
+        (candValue<0?-1:1) * Math.abs(candValue),
+        (baseValue<0?-1:1) * Math.abs(baseValue)
+      )
+    )
     return delta
   }
 
