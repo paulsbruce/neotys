@@ -83,16 +83,10 @@ app.route('/api/comparison')
   .get(function(req, res) {
     var ctx = getContext(req)
 
-    if(hashComparisons.has(ctx.comparison.getKey())) {
-      ctx.comparison = hashComparisons.get(ctx.comparison.getKey())
-      res.json(ctx.comparison.body);
-    }
-    else {
-      promiseTheBody(ctx)
-      .then(body => {
-        res.json(body);
-      })
-    }
+    promiseTheBody(ctx)
+    .then(body => {
+      res.json(body);
+    })
   });
 
   function getContext(req) {
@@ -114,81 +108,210 @@ app.route('/api/comparison')
     var candId = ctx.candId;
     var comparison = ctx.comparison;
 
-    var body = {
-      baseId: baseId,
-      candId: candId,
-      generatedOn: (new Date()).getTime(),
-      links: {
-        baseline: {
-          overview: nlw.getOverviewUrl(baseId),
-          counters: nlw.getCountersUrl(baseId),
-          transactions: nlw.getTransactionsUrl(baseId),
-          requests: nlw.getRequestsUrl(baseId)
+    if(hashComparisons.has(ctx.comparison.getKey())) {
+      return new Promise(function(resolve,reject) {
+        ctx.comparison = hashComparisons.get(ctx.comparison.getKey())
+        resolve(ctx.comparison.body);
+      });
+    }
+    else {
+
+      var body = {
+        baseId: baseId,
+        candId: candId,
+        generatedOn: (new Date()).getTime(),
+        links: {
+          baseline: {
+            overview: nlw.getOverviewUrl(baseId),
+            counters: nlw.getCountersUrl(baseId),
+            transactions: nlw.getTransactionsUrl(baseId),
+            requests: nlw.getRequestsUrl(baseId)
+          },
+          candidate: {
+            overview: nlw.getOverviewUrl(candId),
+            counters: nlw.getCountersUrl(candId),
+            transactions: nlw.getTransactionsUrl(candId),
+            requests: nlw.getRequestsUrl(candId)
+          }
         },
-        candidate: {
-          overview: nlw.getOverviewUrl(candId),
-          counters: nlw.getCountersUrl(candId),
-          transactions: nlw.getTransactionsUrl(candId),
-          requests: nlw.getRequestsUrl(candId)
-        }
-      },
-      baselineSummary: {},
-      candidateSummary: {},
-      topTransactions: {},
-      topRequests: {},
-      errorsByRequest: {},
-      violations: [],
-      transactionVariances: {},
-      monitors: {}
-      /*,
-      requests: {}
-      */
-    };
+        baselineSummary: {},
+        candidateSummary: {},
+        topTransactions: {},
+        topRequests: {},
+        errorsByRequest: {},
+        violations: [],
+        transactionVariances: {},
+        monitors: {}
+        /*,
+        requests: {}
+        */
+      };
 
-    return Promise.all([
-      promiseTestStatistics(comparison.aggregator,baseId).then(o => {
-        body.baselineSummary = o
-      }),
-      promiseTestStatistics(comparison.aggregator,candId).then(o => {
-        body.candidateSummary = o
-      }),
-      promiseMonitors(comparison.aggregator,baseId,candId).then(o => {
-        body.monitors = o
-      }),
-      promiseViolations(comparison.aggregator,baseId,candId).then(o => {
-        body.violations = o;
-      }),
-      promiseErrorsByRequest(comparison.aggregator,baseId,candId).then(o => {
-        body.errorsByRequest = o
-      }),
-      promiseTransactionVariances(comparison.aggregator,baseId,candId).then(o => {
-        body.transactionVariances = o
-      }),
-      promiseTopRequests(comparison.aggregator,baseId,candId).then(o => {
-        body.topRequests = o
-      }),
-      ,
-      promiseRequestDetails(comparison.aggregator,baseId,candId).then(o => {
-        body.requests = o
-      })
+      return Promise.all([
+        promiseTestStatistics(comparison.aggregator,baseId).then(o => {
+          body.baselineSummary = o
+        }),
+        promiseTestStatistics(comparison.aggregator,candId).then(o => {
+          body.candidateSummary = o
+        }),
+        promiseMonitors(comparison.aggregator,baseId,candId).then(o => {
+          body.monitors = o
+        }),
+        promiseViolations(comparison.aggregator,baseId,candId).then(o => {
+          body.violations = o;
+        }),
+        promiseErrorsByRequest(comparison.aggregator,baseId,candId).then(o => {
+          body.errorsByRequest = o
+        }),
+        promiseTransactionVariances(comparison.aggregator,baseId,candId).then(o => {
+          body.transactionVariances = o
+        }),
+        promiseTopRequests(comparison.aggregator,baseId,candId).then(o => {
+          body.topRequests = o
+        }),
+        ,
+        promiseRequestDetails(comparison.aggregator,baseId,candId).then(o => {
+          body.requests = o
+        })
 
-    ]).then(r => {
-      // greedy grab all transaction data to calculate percentiles before summarizing
-      return promiseTopTransactions(comparison.aggregator,baseId,candId).then(o => {
-        body.topTransactions = o
+      ]).then(r => {
+        // greedy grab all transaction data to calculate percentiles before summarizing
+        return promiseTopTransactions(comparison.aggregator,baseId,candId).then(o => {
+          body.topTransactions = o
+        })
       })
-    })
-    .then(r => {
-      comparison.body = body;
-      hashComparisons.set(comparison.getKey(),comparison)
-      return body
-    })
+      .then(r => {
+        comparison.body = body;
+        hashComparisons.set(comparison.getKey(),comparison)
+        return body
+      })
+    }
   }
 
   app.route('/report')
     .get(function(req, res) {
       res.sendFile(path.join(__dirname + '/static/report.template.html'))
     });
+
+  app.route('/api/listProjects')
+    .get(function(req, res) {
+      nlw.tests(undefined,undefined,10000)
+        .then(tests => {
+          return tests
+            .group('project')
+            .keys()
+            .sortBy((a,b) => lcomp(a,b))
+        })
+        .then(names => {
+          res.json(names);
+        })
+    });
+  app.route('/api/listScenarios')
+    .get(function(req, res) {
+      var project = req.query.project;
+      nlw.tests(project,undefined,10000)
+        .then(tests => {
+          return tests
+            .filter(test => lcomp(test.project,project)==0)
+            .group('scenario')
+            .keys()
+            .sortBy((a,b) => lcomp(a,b))
+        })
+        .then(names => {
+          res.json(names);
+        })
+    });
+  app.route('/api/listTests')
+    .get(function(req, res) {
+      promiseTestList(req,res)
+        .then(tests => {
+          res.json(tests);
+        })
+    });
+  app.route('/api/getLatestTest')
+    .get(function(req, res) {
+      if(!requiredParam(req,res,"project")) return;
+      if(!requiredParam(req,res,"scenario")) return;
+      var status = orNull(req.query.status);
+      var qualityStatus = orNull(req.query.qualityStatus);
+
+      promiseTestList(req,res)
+        .then(tests => {
+          return tests
+            .filter(test => (status==null || test.status==status))
+            .filter(test => (qualityStatus==null || test.qualityStatus==qualityStatus))
+        })
+        .then(tests => {
+          if(tests.length > 0) {
+            res.set('Content-Type', 'text/plain');
+            res.json(tests.slice(0,1))
+            res.status(200).end();
+          } else {
+            res.status(404).end();
+          }
+        })
+    });
+
+    function orNull(val) { return (val!=undefined && val != null) ? val : null; }
+
+    function requiredParam(req,res,paramName) {
+      var val = req.query[paramName];
+      console_log(paramName+": ["+val+"]")
+      var provided = (val!=undefined && val!=null && (val+"").trim().length>0);
+      if(!provided)
+      {
+        res.set('Content-Type', 'text/plain');
+        res.send(Buffer.from("Missing required query parameter '"+paramName+"'."));
+        res.status(406).end();
+      }
+      return provided;
+    }
+    function promiseTestList(req,res) {
+      var project = req.query.project;
+      var scenario = req.query.scenario;
+      var status = orNull(req.query.status);
+      return nlw.tests(project,status,10000)
+        .then(tests => {
+          return tests
+            .filter(test => lcomp(test.project,project)==0 && lcomp(test.scenario,scenario)==0)
+            .sortBy((a,b) => (new Date(b.startDate) - new Date(a.startDate)))
+            .flip()
+        })
+    }
+    function lcomp(a,b) {
+      if(a == null && b == null) return 0;
+      if(a == null) return -1;
+      if(b == null) return 1;
+      return (a+"").lctrim().localeCompare((b+"").lctrim())
+    }
+    String.prototype.lctrim = function() {
+      return (this == null ? null : this.trim().toLowerCase())
+    };
+    Array.prototype.flip = function() {
+      var arr = this.clone()
+      arr.reverse()
+      return arr;
+    };
+    Array.prototype.clone = function() {
+    	return this.slice(0);
+    };
+    Array.prototype.sortBy = function(comparer) {
+      var arr = this.clone()
+      arr.sort(comparer)
+      return arr;
+    }
+    Array.prototype.group = function(groupProp) {
+      const map = new HashMap();
+      var keyGetter = (itm) => itm[groupProp]
+      this.forEach((item) => {
+          const key = keyGetter(item);
+          if (!map.has(key))
+            map.set(key, [item]);
+          else
+            map.get(key).push(item);
+      });
+      return map;
+    };
 
   app.route('/bundle')
     .get(function(req, res) {
@@ -213,23 +336,19 @@ app.route('/api/comparison')
       });
     });
   function promiseTestStatistics(aggregator,testId) {
-    return nlw.test(testId).then(r => {
-
-      var info = r.body;
-      return info;
-    }).then(info => {
-      return nlw.testStatistics(testId).then(r => {
-        var stats = r.body;
-        var ext = {
-          transactionsPerSecond: stats.totalTransactionCountPerSecond,
-          averageResponseTime: stats.totalRequestDurationAverage,
-          throughput: (stats.totalGlobalDownloadedBytesPerSecond / (1 * 1000 * 1000) * 8),
-          errorCount: stats.totalGlobalCountFailure
-        };
-        for(var k in stats) info[k]=stats[k];
-        for(var k in ext) info[k]=ext[k];
-        return info;
-      })
+    return nlw.test(testId)
+      .then(test => {
+        return nlw.testStatistics(testId).then(stats => {
+          var ext = {
+            transactionsPerSecond: stats.totalTransactionCountPerSecond,
+            averageResponseTime: stats.totalRequestDurationAverage,
+            throughput: (stats.totalGlobalDownloadedBytesPerSecond / (1 * 1000 * 1000) * 8),
+            errorCount: stats.totalGlobalCountFailure
+          };
+          for(var k in stats) test[k]=stats[k];
+          for(var k in ext) test[k]=ext[k];
+          return test;
+        })
     })
   }
 
@@ -574,11 +693,10 @@ app.route('/api/comparison')
 
           return new Promise(function(resolve,reject) {
               var prom = nlw.monitors(testId)
-              .then(r => {
-                var rs = r.body;
-                stowMonitors(agg,rs,fStow)
+              .then(mons => {
+                stowMonitors(agg,mons,fStow)
                 return Promise.all(
-                    rs.map(function(el) {
+                    mons.map(function(el) {
                       var key = el.path.join('|');
                       var mon = agg.get(key);
                       return Promise.all([

@@ -495,6 +495,8 @@ function NLWAPI(apiKey, host, ssl) {
       return cli.apis.Results.GetTest({testId: id});
     }).catch(err => {
       handleError(err,{id:id})
+    }).then(r => {
+      return r.body;
     });
   }
 
@@ -503,15 +505,29 @@ function NLWAPI(apiKey, host, ssl) {
       return cli.apis.Results.GetTestStatistics({testId: id});
     }).catch(err => {
       handleError(err,{id:id})
-    });;
+    }).then(r => {
+      return r.body;
+    });
   }
 
-  this.tests = function() {
+  this.tests = function(projectName, status, limit) {
+    var projectName = (projectName!=undefined ? projectName : null);
+    var status = (status==undefined || status==null || (status+"").trim().length < 1 ? null : status);
+    var limit = (limit!=undefined && limit!=null && !isNaN(parseInt(limit)) ? limit : null);
+    var opts = {}
+    if(projectName != null) opts.project = projectName;
+    if(status != null) opts.status = status;
+    if(limit != null) opts.limit = limit;
+
+    opts.pretty = true;
+
     return this.getClient().then(cli => {
-      return cli.apis.Results.GetTests({limit: 50, pretty: true});
+      return cli.apis.Results.GetTests(opts);
     }).catch(err => {
       handleError(err,{})
-    });;
+    }).then(r => {
+      return r.body;
+    });
   }
 
   this.elements = function(test,category) {
@@ -574,6 +590,8 @@ function NLWAPI(apiKey, host, ssl) {
       return cli.apis.Results.GetTestMonitors({testId: testId});
     }).catch(err => {
       handleError(err,{testId:testId})
+    }).then(r => {
+      return r.body;
     });
   }
   this.monitorValues = function(testId,counterId) {
