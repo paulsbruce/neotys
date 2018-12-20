@@ -120,6 +120,7 @@ app.route('/api/comparison')
         baseId: baseId,
         candId: candId,
         generatedOn: (new Date()).getTime(),
+        haltablesCount: 0,
         links: {
           baseline: {
             overview: nlw.getOverviewUrl(baseId),
@@ -179,6 +180,19 @@ app.route('/api/comparison')
         return promiseTopTransactions(comparison.aggregator,baseId,candId).then(o => {
           body.topTransactions = o
         })
+      })
+      .then(r => {
+        var data = body;
+
+        data.haltablesCount = (data.violations.length > 0 ?
+          data.violations
+            .map(v => v.monitors)
+            .reduce(function(arr,sub) { return arr.concat(sub) })
+            .map(mon => 1)
+            .reduce(function(sum,num) { return sum+num })
+            : 0)
+            
+        body = data
       })
       .then(r => {
         comparison.body = body;
