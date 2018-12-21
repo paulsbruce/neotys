@@ -191,7 +191,7 @@ app.route('/api/comparison')
             .map(mon => 1)
             .reduce(function(sum,num) { return sum+num })
             : 0)
-            
+
         body = data
       })
       .then(r => {
@@ -244,12 +244,21 @@ app.route('/api/comparison')
     });
   app.route('/api/getLatestTest')
     .get(function(req, res) {
+      promiseLatestTest(req,res)
+    });
+  app.route('/api/getLatestTestId')
+    .get(function(req, res) {
+      promiseLatestTest(req,res,true)
+    });
+
+    function promiseLatestTest(req,res,justId) {
+      justId = (justId==true);
       if(!requiredParam(req,res,"project")) return;
       if(!requiredParam(req,res,"scenario")) return;
       var status = orNull(req.query.status);
       var qualityStatus = orNull(req.query.qualityStatus);
 
-      promiseTestList(req,res)
+      return promiseTestList(req,res)
         .then(tests => {
           return tests
             .filter(test => (status==null || test.status==status))
@@ -258,14 +267,18 @@ app.route('/api/comparison')
         .then(tests => {
           if(tests.length > 0) {
             res.set('Content-Type', 'text/plain');
-            res.json(tests.slice(0,1))
+            
+            if(justId)
+              res.send(Buffer.from(tests[0].id))
+            else
+              res.json(tests.slice(0,1))
+
             res.status(200).end();
           } else {
             res.status(404).end();
           }
         })
-    });
-
+    }
     function orNull(val) { return (val!=undefined && val != null) ? val : null; }
 
     function requiredParam(req,res,paramName) {
