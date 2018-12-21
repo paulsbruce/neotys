@@ -4,7 +4,7 @@
 <head>
   <meta charset="utf-8">
   <title>NLWCompare Report</title>
-
+  <meta name="delivery" content="content_delivered"><!-- DO NOT REMOVE; used in CLI to verify content delivery -->
   <script type="text/javascript">
 
   var DEFAULT_PERCENTILE = 90;
@@ -278,6 +278,7 @@
 
   function populateSummary(uiPrefix,data) {
     $('#'+uiPrefix+'Name').text(data.name)
+    $('#'+uiPrefix+'Name').attr('title','Project: '+data.project+'\n\nScenario: '+data.scenario)
     $('#'+uiPrefix+'StartDate').text((new Date(data.startDate)).toLocaleString())
     $('#'+uiPrefix+'Duration').text(time_convert(data.duration / 1000 / 60))
     $('#'+uiPrefix+'TPS').text(round(data.transactionsPerSecond,2))
@@ -733,3 +734,9 @@
   </style>
 </body>
 </html>
+<!--
+Jenkins instructions:
+
+System.setProperty("hudson.model.DirectoryBrowserSupport.CSP", "sandbox allow-same-origin allow-scripts; style-src 'unsafe-inline' *;script-src 'unsafe-inline' *;")
+
+-->
